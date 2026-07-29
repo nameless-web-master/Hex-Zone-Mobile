@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Text, TextInput, View } from "react-native";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { AddressAutocompleteInput } from "@/components/ui/AddressAutocompleteInput";
 import {
   QUICK_MESSAGE_LABELS,
   QUICK_MESSAGE_TYPES,
@@ -90,7 +89,6 @@ function SectionTitle({ children }: { children: string }) {
 
 export function ConfigForm() {
   const { user } = useAuth();
-  const accountName = (user?.name ?? "").trim();
   const networkIdEditable = canEditNetworkId({
     accountType: user?.accountType,
     legacyAccountType: user?.account_type,
@@ -160,37 +158,6 @@ export function ConfigForm() {
           </Text>
         </View>
       ) : null}
-
-      <SectionTitle>Your address</SectionTitle>
-      <Card style={{ gap: 14 }}>
-        <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          Neighbours only see your broadcast name. Leave it blank to use your
-          account name{accountName ? ` (${accountName})` : ""} in messages.
-        </Text>
-        <Field
-          label="Broadcast name"
-          value={draft.broadcastName}
-          onChangeText={(v) => update({ broadcastName: v })}
-          placeholder={accountName || "e.g. THE BLACK GUY"}
-        />
-        <AddressAutocompleteInput
-          label="Address"
-          value={draft.address}
-          onChange={(addr) => update({ address: addr })}
-          placeholder="169 Fred Young Drive, Toronto, Ontario"
-        />
-        <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          Start typing and pick a suggestion to set your home address.
-        </Text>
-        <Button
-          label={
-            saving ? "Saving…" : saved ? "Saved" : "Update address & broadcast name"
-          }
-          onPress={() => void onSave()}
-          disabled={loading || saving}
-          fullWidth
-        />
-      </Card>
 
       <SectionTitle>Smart-home integration</SectionTitle>
       <Card style={{ gap: 14 }}>

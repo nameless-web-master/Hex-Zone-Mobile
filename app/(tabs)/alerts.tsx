@@ -1,12 +1,8 @@
 import {
   ActivityIndicator,
   FlatList,
-  Linking,
-  Pressable,
   RefreshControl,
-  ScrollView,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -15,42 +11,38 @@ import { AlertTriangle } from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
 import { ScreenHeader } from "@/components/ui/ScreenHeader";
 import { Card } from "@/components/ui/Card";
-import { Chip } from "@/components/ui/Chip";
+import { MessageInboxFilterBar } from "@/components/messages/MessageInboxFilterBar";
+import { InboxMessageCard } from "@/components/messages/InboxMessageCard";
 import { useAlarmInbox } from "@/context/AlarmInboxContext";
 import { useAuth } from "@/context/AuthContext";
 import { getMembers } from "@/api/members";
 import { messageBroadcastLabel } from "@/lib/messageBroadcast";
 import { resolveBroadcastName } from "@/lib/appSettings";
-import { toMessageTypeLabel, type MessageType } from "@/lib/messageTypes";
+import { type MessageType } from "@/lib/messageTypes";
 import {
   applyMessageInboxFilters,
   messageTypesForCategories,
 } from "@/lib/messageInboxFilters";
-import {
-  isUnknownMessageType,
-  wellnessResponseTrackingEnabled,
-} from "@/lib/messageWorkflow";
-import { messageZoneLabel } from "@/lib/messageZoneLabel";
-import {
-  formatMessageCoordinatesLabel,
-  hasMessageCoordinates,
-  messageCoordinatesMapsUrl,
-} from "@/lib/messageCoordinates";
+import { wellnessResponseTrackingEnabled } from "@/lib/messageWorkflow";
 import { WellnessAckInline } from "@/components/messages/WellnessAckInline";
 import { useZoneNameLookup } from "@/hooks/useZoneNameLookup";
+import { useMemberPresence } from "@/hooks/useMemberPresence";
 import { useEffect, useMemo, useState } from "react";
 import { colors } from "@/theme/colors";
 
 type OwnerNameMap = Record<number, string>;
+type OwnerAvatarMap = Record<number, string>;
 
 export default function AlertsScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const { isOnline } = useMemberPresence();
   const selfBroadcastName = resolveBroadcastName(user?.name);
   const ownerId = user?.id != null ? Number(user.id) : null;
   const { alarmMessages, loading, error, refresh, markAlarmsSeen } = useAlarmInbox();
   const { zoneNames } = useZoneNameLookup();
   const [ownerNames, setOwnerNames] = useState<OwnerNameMap>({});
+  const [ownerAvatars, setOwnerAvatars] = useState<OwnerAvatarMap>({});
   const [zoneFilter, setZoneFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<"all" | MessageType>("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -65,7 +57,8 @@ export default function AlertsScreen() {
     let active = true;
     void getMembers().then((res) => {
       if (!active) return;
-      const map: OwnerNameMap = {};
+      const names: OwnerNameMap = {};
+      const avatars: OwnerAvatarMap = {};
       (res.data ?? []).forEach((row) => {
         const id = Number(row.id);
         if (!Number.isFinite(id) || id <= 0) return;
@@ -74,9 +67,13 @@ export default function AlertsScreen() {
           `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
           row.email ||
           "";
-        if (name) map[id] = name;
+        if (name) names[id] = name;
+        const avatar =
+          typeof row.avatar_url === "string" ? row.avatar_url.trim() : "";
+        if (avatar) avatars[id] = avatar;
       });
-      setOwnerNames(map);
+      setOwnerNames(names);
+      setOwnerAvatars(avatars);
     });
     return () => {
       active = false;
@@ -181,182 +178,23 @@ export default function AlertsScreen() {
               />
             }
             ListHeaderComponent={
-              <Card style={{ marginBottom: 14, gap: 12 }}>
-                <TextInput
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder="Search alarms…"
-                  placeholderTextColor={colors.textDim}
-                  style={{
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    backgroundColor: colors.bgElevated,
-                    borderRadius: 12,
-                    paddingHorizontal: 14,
-                    paddingVertical: 11,
-                    color: colors.text,
-                    fontSize: 15,
-                  }}
-                />
-
-                <View>
-                  <Text
-                    style={{
-                      color: colors.textMuted,
-                      fontSize: 11,
-                      fontWeight: "700",
-                      letterSpacing: 0.8,
-                      textTransform: "uppercase",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Zone
-                  </Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: 8, paddingRight: 4 }}
-                  >
-                    <Pressable onPress={() => setZoneFilter("all")}>
-                      <Chip
-                        label="All zones"
-                        active={zoneFilter === "all"}
-                        style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                      />
-                    </Pressable>
-                    {allZoneIds.map((zone) => (
-                      <Pressable key={zone} onPress={() => setZoneFilter(zone)}>
-                        <Chip
-                          label={zoneNames.get(zone) ?? zone}
-                          active={zoneFilter === zone}
-                          style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                        />
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </View>
-
-                <View>
-                  <Text
-                    style={{
-                      color: colors.textMuted,
-                      fontSize: 11,
-                      fontWeight: "700",
-                      letterSpacing: 0.8,
-                      textTransform: "uppercase",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Type
-                  </Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: 8, paddingRight: 4 }}
-                  >
-                    <Pressable onPress={() => setTypeFilter("all")}>
-                      <Chip
-                        label="All types"
-                        active={typeFilter === "all"}
-                        style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                      />
-                    </Pressable>
-                    {alarmTypeOptions.map((option) => (
-                      <Pressable
-                        key={option.type}
-                        onPress={() => setTypeFilter(option.type)}
-                      >
-                        <Chip
-                          label={option.label}
-                          active={typeFilter === option.type}
-                          style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                        />
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </View>
-
-                <View>
-                  <Text
-                    style={{
-                      color: colors.textMuted,
-                      fontSize: 11,
-                      fontWeight: "700",
-                      letterSpacing: 0.8,
-                      textTransform: "uppercase",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Date range
-                  </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <TextInput
-                      value={dateFrom}
-                      onChangeText={setDateFrom}
-                      placeholder="From"
-                      placeholderTextColor={colors.textDim}
-                      autoCapitalize="none"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        backgroundColor: colors.bgElevated,
-                        borderRadius: 12,
-                        paddingHorizontal: 12,
-                        paddingVertical: 10,
-                        color: colors.text,
-                        fontSize: 13,
-                      }}
-                    />
-                    <Text style={{ color: colors.textMuted, fontSize: 12 }}>to</Text>
-                    <TextInput
-                      value={dateTo}
-                      onChangeText={setDateTo}
-                      placeholder="To"
-                      placeholderTextColor={colors.textDim}
-                      autoCapitalize="none"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        backgroundColor: colors.bgElevated,
-                        borderRadius: 12,
-                        paddingHorizontal: 12,
-                        paddingVertical: 10,
-                        color: colors.text,
-                        fontSize: 13,
-                      }}
-                    />
-                  </View>
-                </View>
-
-                {(search.trim() ||
-                  zoneFilter !== "all" ||
-                  typeFilter !== "all" ||
-                  dateFrom ||
-                  dateTo) && (
-                  <Pressable
-                    onPress={() => {
-                      setSearch("");
-                      setZoneFilter("all");
-                      setTypeFilter("all");
-                      setDateFrom("");
-                      setDateTo("");
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: colors.accent,
-                        fontSize: 13,
-                        fontWeight: "600",
-                        textAlign: "center",
-                      }}
-                    >
-                      Clear filters
-                    </Text>
-                  </Pressable>
-                )}
-              </Card>
+              <MessageInboxFilterBar
+                search={search}
+                onSearchChange={setSearch}
+                zoneFilter={zoneFilter}
+                onZoneFilterChange={setZoneFilter}
+                zoneIds={allZoneIds}
+                zoneNames={zoneNames}
+                typeFilter={typeFilter}
+                onTypeFilterChange={setTypeFilter}
+                typeOptions={alarmTypeOptions}
+                typeAllLabel="All alarms"
+                searchPlaceholder="Search alarms…"
+                dateFrom={dateFrom}
+                onDateFromChange={setDateFrom}
+                dateTo={dateTo}
+                onDateToChange={setDateTo}
+              />
             }
             ListEmptyComponent={
               <Card>
@@ -366,105 +204,47 @@ export default function AlertsScreen() {
               </Card>
             }
             renderItem={({ item }) => {
-              const isUnknown = isUnknownMessageType(item.type);
               const broadcast = messageBroadcastLabel(item, {
                 selfOwnerId: ownerId,
                 selfBroadcastName,
                 resolveOwnerName: (id) => ownerNames[id] ?? null,
               });
-              const mapsUrl = messageCoordinatesMapsUrl(item);
-              const hasCoords = hasMessageCoordinates(item);
+              const senderId =
+                typeof item.sender_id === "number" && item.sender_id > 0
+                  ? item.sender_id
+                  : null;
+              const thinAvatar =
+                senderId != null ? `/owners/${senderId}/avatar` : null;
+              const avatarUrl =
+                senderId != null &&
+                ownerId != null &&
+                senderId === ownerId
+                  ? user?.avatar_url ?? ownerAvatars[senderId] ?? thinAvatar
+                  : senderId != null
+                    ? ownerAvatars[senderId] ?? thinAvatar
+                    : null;
               return (
-                <Card
+                <InboxMessageCard
+                  item={item}
+                  userName={broadcast}
+                  avatarUrl={avatarUrl}
+                  online={senderId != null ? isOnline(senderId) : false}
+                  selfOwnerId={ownerId}
+                  zoneNames={zoneNames}
                   style={{
-                    marginBottom: 10,
-                    borderColor: isUnknown ? "#B71C1C" : "rgba(226,59,78,0.35)",
-                    borderWidth: isUnknown ? 2 : 1,
-                    backgroundColor: isUnknown ? "#FFEBEE" : undefined,
+                    borderColor: "rgba(226,59,78,0.35)",
                   }}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      gap: 6,
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                        gap: 6,
-                        flex: 1,
-                      }}
-                    >
-                      <Chip
-                        label={toMessageTypeLabel(item.type)}
-                        tone={isUnknown ? "critical" : "danger"}
+                  footerExtra={
+                    item.type === "WELLNESS_CHECK" &&
+                    wellnessResponseTrackingEnabled(item) ? (
+                      <WellnessAckInline
+                        messageEventId={item.id}
+                        selfOwnerId={ownerId}
+                        senderId={item.sender_id ?? null}
                       />
-                      {hasCoords && mapsUrl ? (
-                        <Pressable
-                          onPress={() => void Linking.openURL(mapsUrl)}
-                          accessibilityRole="link"
-                          accessibilityLabel="Open sender location in maps"
-                        >
-                          <Chip
-                            label={formatMessageCoordinatesLabel(item)}
-                            active
-                          />
-                        </Pressable>
-                      ) : (
-                        <Chip
-                          label={formatMessageCoordinatesLabel(item)}
-                          tone="muted"
-                        />
-                      )}
-                    </View>
-                    <Text style={{ color: colors.textDim, fontSize: 11 }}>
-                      {new Date(item.created_at).toLocaleString()}
-                    </Text>
-                  </View>
-                  <Text
-                    style={{
-                      color: isUnknown ? "#B71C1C" : colors.text,
-                      fontSize: isUnknown ? 18 : 16,
-                      fontWeight: "800",
-                      marginTop: 10,
-                    }}
-                  >
-                    {broadcast}
-                  </Text>
-                  <Text
-                    style={{
-                      color: isUnknown ? "#7A1622" : colors.text,
-                      fontSize: isUnknown ? 17 : 15,
-                      fontWeight: isUnknown ? "700" : "500",
-                      marginTop: 4,
-                      lineHeight: 22,
-                    }}
-                  >
-                    {item.message}
-                  </Text>
-                  <Text
-                    style={{ color: colors.textMuted, fontSize: 12, marginTop: 8 }}
-                  >
-                    {messageZoneLabel(item, {
-                      viewerOwnerId: ownerId,
-                      zoneNames,
-                    })}
-                  </Text>
-                  {item.type === "WELLNESS_CHECK" &&
-                  wellnessResponseTrackingEnabled(item) ? (
-                    <WellnessAckInline
-                      messageEventId={item.id}
-                      selfOwnerId={ownerId}
-                      senderId={item.sender_id ?? null}
-                    />
-                  ) : null}
-                </Card>
+                    ) : null
+                  }
+                />
               );
             }}
           />

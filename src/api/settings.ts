@@ -27,3 +27,13 @@ export async function updateRemoteAppSettings(payload: AppSettings) {
     data: payload,
   });
 }
+
+/** Upload a profile photo (data URL / base64). Server compresses and stores it. */
+export async function uploadProfileAvatar(imageDataUrl: string) {
+  return request<{ avatar_url: string }>({
+    method: "POST",
+    url: "/me/avatar",
+    data: { image: imageDataUrl },
+    timeout: 60000,
+  });
+}

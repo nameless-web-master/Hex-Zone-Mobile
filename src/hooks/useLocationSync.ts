@@ -1,19 +1,27 @@
 import { useEffect } from "react";
 import { readDeviceLocation } from "@/lib/expoLocation";
 import { updateLocation } from "@/api/members";
+import { useAuth } from "@/context/AuthContext";
+import { useWebSocket } from "./useWebSocket";
 
 /** How often we push GPS to the server for in-zone recipient matching. */
 const SYNC_INTERVAL_MS = 30_000;
 
 /**
- * Periodically publishes the device's GPS position to the server
- * (`POST /members/location`) for dynamic zones and sender-side live geo workflows.
- * Live fixes are stored in `member_locations`; registered home address coords
- * on the owner profile are unchanged.
+ * Periodically publishes the device's GPS position to the server.
+ * Prefers WebSocket **`LOCATION_UPDATE`** when connected; falls back to
+ * **`POST /members/location`** when the socket is closed.
  */
 export function useLocationSync(enabled: boolean) {
+  const { token } = useAuth();
+  const { status, sendMessage } = useWebSocket({
+    token: enabled ? token : null,
+    zoneIds: [],
+    enabled: enabled && Boolean(token),
+  });
+
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !token) return;
 
     let cancelled = false;
     const push = async () => {
@@ -22,10 +30,18 @@ export function useLocationSync(enabled: boolean) {
         allowLastKnown: false,
       });
       if (cancelled || !result) return;
-      await updateLocation({
-        latitude: result.coords.latitude,
-        longitude: result.coords.longitude,
-      });
+      const latitude = result.coords.latitude;
+      const longitude = result.coords.longitude;
+      const sent =
+        status === "open" &&
+        sendMessage({
+          type: "LOCATION_UPDATE",
+          latitude,
+          longitude,
+        });
+      if (!sent) {
+        await updateLocation({ latitude, longitude });
+      }
     };
 
     void push();
@@ -36,5 +52,5 @@ export function useLocationSync(enabled: boolean) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [enabled]);
+  }, [enabled, token, status, sendMessage]);
 }

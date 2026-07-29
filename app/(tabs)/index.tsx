@@ -14,13 +14,13 @@ import { ZoneTypePicker } from "@/components/dashboard/ZoneTypePicker";
 import { ZoneTypePanel } from "@/components/dashboard/ZoneTypePanel";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { Logo } from "@/components/ui/Logo";
-import { AlertBellButton } from "@/components/ui/AlertBellButton";
+import { AppHeader } from "@/components/ui/AppHeader";
 import { RecentServicesSection } from "@/components/dashboard/RecentServicesSection";
 import { useAuth } from "@/context/AuthContext";
 import { MAX_ZONE_NAME_LENGTH, useZoneBuilder } from "@/hooks/useZoneBuilder";
 import { colorForZoneType, summarizeZone } from "@/lib/zoneGeometry";
 import { colors } from "@/theme/colors";
+import { useFloatingTabBarInset } from "@/components/navigation/FloatingTabBar";
 
 export default function DashboardScreen() {
   const { ownerZoneId, user } = useAuth();
@@ -32,6 +32,7 @@ export default function DashboardScreen() {
     isAccountAdministrator: String(user?.role ?? "").toLowerCase() === "administrator",
   });
   const [panelOpen, setPanelOpen] = useState(true);
+  const tabBarInset = useFloatingTabBarInset();
 
   const dragResponder = useRef(
     PanResponder.create({
@@ -93,79 +94,19 @@ export default function DashboardScreen() {
       >
         <View
           style={{
-            marginHorizontal: 14,
+            marginHorizontal: 10,
             marginTop: 6,
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderRadius: 16,
-            backgroundColor: "rgba(255,255,255,0.92)",
+            borderRadius: 18,
+            backgroundColor: "rgba(255,255,255,0.96)",
             borderWidth: 1,
             borderColor: colors.border,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
           }}
         >
-          <Logo size={22} />
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              flex: 1,
-              justifyContent: "flex-end",
-              paddingRight: 10,
-            }}
-          >
-            <View
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: colorForZoneType(builder.zoneType),
-              }}
-            />
-            <Text
-              style={{ color: colors.text, fontSize: 13, fontWeight: "700" }}
-            >
-              {sectionTitle}
-            </Text>
-            <View
-              style={{
-                marginLeft: 8,
-                paddingHorizontal: 8,
-                paddingVertical: 3,
-                borderRadius: 999,
-                backgroundColor: colors.bgSurface,
-                borderWidth: 1,
-                borderColor:
-                  builder.capabilities?.can_create_zone === false
-                    ? colors.danger
-                    : colors.border,
-              }}
-            >
-              <Text
-                style={{
-                  color:
-                    builder.capabilities?.can_create_zone === false
-                      ? colors.danger
-                      : colors.textMuted,
-                  fontSize: 11,
-                  fontWeight: "700",
-                }}
-              >
-                {builder.loadingList
-                  ? "…"
-                  : builder.capabilities?.max_total != null &&
-                      typeof builder.capabilities.remaining_total === "number"
-                    ? `${builder.capabilities.max_total - builder.capabilities.remaining_total}/${builder.capabilities.max_total}`
-                    : builder.capabilities?.max_total != null
-                      ? `${builder.layers.length}/${builder.capabilities.max_total}`
-                      : `${builder.layers.length} saved`}
-              </Text>
-            </View>
-          </View>
-          <AlertBellButton />
+          <AppHeader
+            title="Home"
+            subtitle={sectionTitle}
+            style={{ backgroundColor: "transparent", paddingBottom: 10 }}
+          />
         </View>
         <View style={{ marginHorizontal: 14, marginTop: 10 }}>
           <RecentServicesSection zoneId={ownerZoneId || undefined} />
@@ -173,8 +114,7 @@ export default function DashboardScreen() {
       </SafeAreaView>
 
       {/* Bottom sheet — tap handle to hide / show */}
-      <SafeAreaView
-        edges={["bottom"]}
+      <View
         style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
         pointerEvents="box-none"
       >
@@ -182,7 +122,7 @@ export default function DashboardScreen() {
           <View
             style={{
               marginHorizontal: 10,
-              marginBottom: 8,
+              marginBottom: tabBarInset,
               borderRadius: 22,
               backgroundColor: "rgba(255,255,255,0.97)",
               borderWidth: 1,
@@ -417,7 +357,7 @@ export default function DashboardScreen() {
             accessibilityLabel="Show zone panel"
             style={{
               alignSelf: "center",
-              marginBottom: 12,
+              marginBottom: tabBarInset,
               flexDirection: "row",
               alignItems: "center",
               gap: 8,
@@ -453,7 +393,7 @@ export default function DashboardScreen() {
             <ChevronUp size={16} color={colors.accent} />
           </Pressable>
         )}
-      </SafeAreaView>
+      </View>
     </View>
   );
 }

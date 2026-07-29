@@ -5,10 +5,17 @@ type ChipProps = {
   label: string;
   active?: boolean;
   tone?: "default" | "success" | "warning" | "danger" | "critical" | "service" | "muted";
+  size?: "md" | "sm";
   style?: ViewStyle;
 };
 
-export function Chip({ label, active, tone = "default", style }: ChipProps) {
+export function Chip({
+  label,
+  active,
+  tone = "default",
+  size = "md",
+  style,
+}: ChipProps) {
   const palette = (() => {
     if (active) {
       return {
@@ -40,12 +47,14 @@ export function Chip({ label, active, tone = "default", style }: ChipProps) {
     };
   })();
 
+  const compact = size === "sm";
+
   return (
     <View
       style={[
         {
-          paddingHorizontal: 12,
-          paddingVertical: 6,
+          paddingHorizontal: compact ? 8 : 12,
+          paddingVertical: compact ? 3 : 6,
           borderRadius: 999,
           backgroundColor: palette.bg,
           borderWidth: 1,
@@ -58,9 +67,14 @@ export function Chip({ label, active, tone = "default", style }: ChipProps) {
       <Text
         style={{
           color: palette.fg,
-          fontSize: tone === "critical" || tone === "service" ? 13 : 11,
-          fontWeight: tone === "critical" || tone === "service" ? "800" : "600",
-          letterSpacing: 0.6,
+          fontSize: compact
+            ? 9
+            : tone === "critical" || tone === "service"
+              ? 13
+              : 11,
+          fontWeight:
+            tone === "critical" || tone === "service" ? "800" : "600",
+          letterSpacing: compact ? 0.3 : 0.6,
           textTransform: "uppercase",
         }}
       >

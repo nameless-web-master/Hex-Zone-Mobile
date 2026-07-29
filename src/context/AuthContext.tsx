@@ -51,6 +51,9 @@ import {
   setCurrentDeviceOffline,
   syncCurrentDevice,
 } from "@/lib/deviceSync";
+import { getOrCreateDeviceHid } from "@/lib/storage";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { parseSessionRevokedSocketEvent } from "@/lib/messageSocket";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -74,6 +77,8 @@ type AuthContextValue = {
   register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  /** Optimistically update the in-memory avatar (header updates instantly). */
+  setUserAvatar: (avatarUrl: string | null) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -127,6 +132,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ownerZoneId, setOwnerZoneId] = useState<string>("");
   const reauthInProgress = useRef(false);
   const sessionInProgress = useRef(false);
+  const { lastMessage, status: wsStatus } = useWebSocket({
+    token,
+    zoneIds: [],
+    enabled: Boolean(token),
+  });
 
   const performLogout = useCallback(
     async (options?: { clearCredentials?: boolean }) => {
@@ -329,7 +339,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token, user, performLogout]);
 
   // Sign out this phone when another device takes over the account session.
+  // Prefer SESSION_REVOKED over the socket; HTTP poll only while WS is down.
   // Also enforce inactivity timeout and refresh the activity stamp on resume.
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    let cancelled = false;
+    let alerted = false;
+
+    const handleRevoked = async () => {
+      if (cancelled || alerted) return;
+      alerted = true;
+      Alert.alert("Signed out", DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE);
+      setAuthError(DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE);
+      await performLogout();
+    };
+
+    const onSocketFrame = async () => {
+      if (!lastMessage) return;
+      const evt = parseSessionRevokedSocketEvent(lastMessage);
+      if (!evt) return;
+      const localHid = (await getOrCreateDeviceHid()).toUpperCase();
+      const revoked =
+        evt.released_hids.includes(localHid) ||
+        (evt.kept_hid != null &&
+          evt.kept_hid.length > 0 &&
+          evt.kept_hid !== localHid);
+      if (revoked) await handleRevoked();
+    };
+    void onSocketFrame();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user, lastMessage, performLogout]);
+
   useEffect(() => {
     if (!token || !user?.id) return;
     const ownerId = String(user.id);
@@ -345,6 +388,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const checkRemoteSignOut = async () => {
       if (await enforceInactivity()) return;
+      if (wsStatus === "open") return;
       const active = await isLocalDeviceSessionActive(ownerId);
       if (cancelled || active) return;
       if (!alerted) {
@@ -375,7 +419,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearInterval(interval);
       sub.remove();
     };
-  }, [token, user, performLogout]);
+  }, [token, user, performLogout, wsStatus]);
 
   // Pull the owner's saved settings (broadcast name, address, shared
   // notification, quick messages) into the local store after login so message
@@ -456,6 +500,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [token]);
 
+  const setUserAvatar = useCallback((avatarUrl: string | null) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      return { ...prev, avatar_url: avatarUrl };
+    });
+  }, []);
+
   const login = useCallback(
     async (
       email: string,
@@ -505,6 +556,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       refreshUser,
+      setUserAvatar,
     }),
     [
       user,
@@ -518,6 +570,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       refreshUser,
+      setUserAvatar,
     ],
   );
 

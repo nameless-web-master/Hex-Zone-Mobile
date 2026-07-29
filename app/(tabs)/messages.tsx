@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Linking,
   Modal,
   Pressable,
   RefreshControl,
@@ -20,20 +19,22 @@ import {
   HelpCircle,
   Megaphone,
   MessageSquare,
-  Plus,
   Radar,
   Send,
   Siren,
   Wrench,
 } from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
-import { ScreenHeader } from "@/components/ui/ScreenHeader";
-import { AlertBellButton } from "@/components/ui/AlertBellButton";
+import { AppHeader } from "@/components/ui/AppHeader";
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { Button } from "@/components/ui/Button";
+import { MessageInboxFilterBar } from "@/components/messages/MessageInboxFilterBar";
+import { InboxMessageCard } from "@/components/messages/InboxMessageCard";
+import { WellnessAckInline } from "@/components/messages/WellnessAckInline";
 import { useMessagesFeed } from "@/hooks/useMessagesFeed";
 import { useZoneNameLookup } from "@/hooks/useZoneNameLookup";
+import { useBottomSafeInset } from "@/hooks/useBottomSafeInset";
 import { useNotifications } from "@/context/NotificationContext";
 import { useAuth } from "@/context/AuthContext";
 import { sendMessage, type Message } from "@/api/messages";
@@ -42,16 +43,18 @@ import {
   searchPrivateMessageRecipients,
   type PrivateSearchMember,
 } from "@/api/messageFeature";
-import { WellnessAckInline } from "@/components/messages/WellnessAckInline";
 import { getMembers } from "@/api/members";
+import { useMemberPresence } from "@/hooks/useMemberPresence";
 import { listGuestRequests } from "@/api/guest";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { presentLocalMessageNotification } from "@/lib/notifications";
 import {
   privateLocationStatusMessage,
   type PrivateLocationStatus,
 } from "@/lib/privateMessageLocation";
-import { messagePositionSourceLabel, resolveMessagePropagationPositionForType } from "@/lib/messagePosition";
+import {
+  messagePositionSourceLabel,
+  resolveMessagePropagationPositionForType,
+} from "@/lib/messagePosition";
 import { getOrCreateDeviceHid } from "@/lib/storage";
 import { isRunningExpoGo } from "@/lib/pushSupport";
 import {
@@ -75,11 +78,7 @@ import {
   type QuickMessageType,
 } from "@/lib/appSettings";
 import { messageBroadcastLabel } from "@/lib/messageBroadcast";
-import { messageZoneLabel, type ZoneNameLookup } from "@/lib/messageZoneLabel";
-import {
-  formatMessageCoordinatesLabel,
-  messageCoordinatesMapsUrl,
-} from "@/lib/messageCoordinates";
+import type { ZoneNameLookup } from "@/lib/messageZoneLabel";
 import {
   getMessageWorkflow,
   isEmergencyMessageType,
@@ -102,40 +101,49 @@ import {
 import { colors } from "@/theme/colors";
 
 type OwnerNameMap = Record<number, string>;
+type OwnerAvatarMap = Record<number, string>;
 
 function MessageRow({
   item,
   selfOwnerId,
   selfBroadcastName,
+  selfAvatarUrl,
   ownerNames,
+  ownerAvatars,
+  senderOnline = false,
   zoneNames,
   highlighted = false,
 }: {
   item: Message;
   selfOwnerId: number | null;
   selfBroadcastName: string;
+  selfAvatarUrl?: string | null;
   ownerNames: OwnerNameMap;
+  ownerAvatars: OwnerAvatarMap;
+  senderOnline?: boolean;
   zoneNames?: ZoneNameLookup;
   highlighted?: boolean;
 }) {
   const router = useRouter();
-  const isUnknown = isUnknownMessageType(item.type);
-  const isService = isServiceMessageType(item.type);
-  const tone = isUnknown
-    ? "critical"
-    : isService
-      ? "service"
-      : item.category === "Alarm"
-        ? "danger"
-        : item.category === "Access"
-          ? "warning"
-          : "default";
 
   const broadcast = messageBroadcastLabel(item, {
     selfOwnerId,
     selfBroadcastName,
     resolveOwnerName: (id) => ownerNames[id] ?? null,
   });
+
+  const senderId =
+    typeof item.sender_id === "number" && item.sender_id > 0
+      ? item.sender_id
+      : null;
+  const thinAvatar =
+    senderId != null ? `/owners/${senderId}/avatar` : null;
+  const avatarUrl =
+    senderId != null && selfOwnerId != null && senderId === selfOwnerId
+      ? selfAvatarUrl ?? ownerAvatars[senderId] ?? thinAvatar
+      : senderId != null
+        ? ownerAvatars[senderId] ?? thinAvatar
+        : null;
 
   const privateCounterpartId =
     item.type === "PRIVATE" && selfOwnerId != null
@@ -147,151 +155,59 @@ function MessageRow({
       : null;
 
   return (
-    <Card
-      style={{
-        marginBottom: 10,
-        ...(highlighted
-          ? {
-              borderColor: colors.accent,
-              borderWidth: 2,
-            }
-          : null),
-        ...(isUnknown
-          ? {
-              borderColor: UNKNOWN_MESSAGE_UI.border,
-              backgroundColor: UNKNOWN_MESSAGE_UI.surface,
-            }
-          : isService
-            ? {
-                borderColor: SERVICE_MESSAGE_UI.border,
-                backgroundColor: SERVICE_MESSAGE_UI.surface,
-              }
-            : null),
-      }}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 6,
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 6,
-          }}
-        >
-          <Chip label={toMessageTypeLabel(item.type)} tone={tone} />
-          {item.type !== "PA" && item.topic_label ? (
-            <Chip label={item.topic_label} tone="warning" />
+    <InboxMessageCard
+      item={item}
+      userName={broadcast}
+      avatarUrl={avatarUrl}
+      online={senderOnline}
+      selfOwnerId={selfOwnerId}
+      zoneNames={zoneNames}
+      highlighted={highlighted}
+      footerExtra={
+        <>
+          {item.type === "WELLNESS_CHECK" &&
+          wellnessResponseTrackingEnabled(item) ? (
+            <WellnessAckInline
+              messageEventId={item.id}
+              selfOwnerId={selfOwnerId}
+              senderId={item.sender_id ?? null}
+            />
           ) : null}
-          {(() => {
-            const mapsUrl = messageCoordinatesMapsUrl(item);
-            const label = formatMessageCoordinatesLabel(item);
-            if (mapsUrl) {
-              return (
-                <Pressable
-                  onPress={() => void Linking.openURL(mapsUrl)}
-                  accessibilityRole="link"
-                  accessibilityLabel="Open sender location in maps"
-                >
-                  <Chip label={label} active />
-                </Pressable>
-              );
-            }
-            return <Chip label={label} tone="muted" />;
-          })()}
-        </View>
-        <Text style={{ color: colors.textDim, fontSize: 11 }}>
-          {new Date(item.created_at).toLocaleString()}
-        </Text>
-      </View>
-      <Text
-        style={{
-          color: isUnknown
-            ? UNKNOWN_MESSAGE_UI.title
-            : isService
-              ? SERVICE_MESSAGE_UI.title
-              : colors.text,
-          fontSize: item.subject ? 17 : isUnknown || isService ? 18 : 16,
-          fontWeight: "800",
-          marginTop: 10,
-        }}
-      >
-        {item.subject || broadcast}
-      </Text>
-      {item.subject ? (
-        <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>
-          {broadcast}
-        </Text>
-      ) : null}
-      {item.message && item.message !== item.subject ? (
-        <Text
-          style={{
-            color: isUnknown
-              ? UNKNOWN_MESSAGE_UI.body
-              : isService
-                ? SERVICE_MESSAGE_UI.body
-                : colors.text,
-            fontSize: isUnknown || isService ? 17 : 15,
-            fontWeight: isUnknown || isService ? "700" : "500",
-            marginTop: 4,
-            lineHeight: 22,
-          }}
-        >
-          {item.message}
-        </Text>
-      ) : null}
-      <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 8 }}>
-        {messageZoneLabel(item, { viewerOwnerId: selfOwnerId, zoneNames })}
-        {item.guest_id ? ` · guest ${String(item.guest_id).slice(0, 8)}…` : ""}
-      </Text>
-      {item.type === "WELLNESS_CHECK" && wellnessResponseTrackingEnabled(item) ? (
-        <WellnessAckInline
-          messageEventId={item.id}
-          selfOwnerId={selfOwnerId}
-          senderId={item.sender_id ?? null}
-        />
-      ) : null}
-      {privateCounterpartId != null ? (
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/(tabs)/private-thread",
-              params: {
-                otherOwnerId: String(privateCounterpartId),
-                selfOwnerId: String(selfOwnerId ?? ""),
-              },
-            } as unknown as Href)
-          }
-          style={{
-            marginTop: 10,
-            alignSelf: "flex-start",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: 10,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-          }}
-        >
-          <MessageSquare size={14} color={colors.accent} />
-          <Text
-            style={{ color: colors.accent, fontSize: 12, fontWeight: "700" }}
-          >
-            View private thread
-          </Text>
-        </Pressable>
-      ) : null}
-    </Card>
+          {privateCounterpartId != null ? (
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: "/(tabs)/private-thread",
+                  params: {
+                    otherOwnerId: String(privateCounterpartId),
+                    selfOwnerId: String(selfOwnerId ?? ""),
+                  },
+                } as unknown as Href)
+              }
+              style={{
+                marginTop: 4,
+                alignSelf: "flex-start",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+              }}
+            >
+              <MessageSquare size={14} color={colors.accent} />
+              <Text
+                style={{ color: colors.accent, fontSize: 12, fontWeight: "700" }}
+              >
+                View private thread
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
@@ -307,7 +223,12 @@ const ALARM_ACTIONS: QuickAction[] = [
   { type: "SENSOR", label: "SENSOR", icon: Radar, tone: "alarm" },
   { type: "NS_PANIC", label: "NS PANIC", icon: Siren, tone: "alarm" },
   { type: "UNKNOWN", label: "UNKNOWN", icon: HelpCircle, tone: "alarm" },
-  { type: "WELLNESS_CHECK", label: "WELLNESS CHECK", icon: HeartPulse, tone: "alarm" },
+  {
+    type: "WELLNESS_CHECK",
+    label: "WELLNESS CHECK",
+    icon: HeartPulse,
+    tone: "alarm",
+  },
 ];
 
 const MESSAGING_ACTIONS: QuickAction[] = [
@@ -491,9 +412,14 @@ function QuickActionButton({
 
 export default function MessagesScreen() {
   const { user } = useAuth();
+  const { isOnline } = useMemberPresence();
   const router = useRouter();
-  const searchParams = useLocalSearchParams<{ type?: string; message?: string }>();
-  const isAdministrator = useIsAdmin();
+  const searchParams = useLocalSearchParams<{
+    type?: string;
+    message?: string;
+    compose?: string;
+    n?: string;
+  }>();
   const settings = useAppSettings();
   const selfBroadcastName = resolveBroadcastName(user?.name);
   const {
@@ -513,9 +439,13 @@ export default function MessagesScreen() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
-  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
+  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(
+    null,
+  );
   const [composeOpen, setComposeOpen] = useState(false);
+  const [actionsSheetOpen, setActionsSheetOpen] = useState(false);
   const [composeType, setComposeType] = useState<MessageType>("PA");
+  const bottomInset = useBottomSafeInset();
   const [composeReceiverId, setComposeReceiverId] = useState("");
   const [draft, setDraft] = useState("");
   const [composeServicePaFields, setComposeServicePaFields] =
@@ -536,6 +466,7 @@ export default function MessagesScreen() {
   const [privateLocationStatus, setPrivateLocationStatus] =
     useState<PrivateLocationStatus | null>(null);
   const [ownerNames, setOwnerNames] = useState<OwnerNameMap>({});
+  const [ownerAvatars, setOwnerAvatars] = useState<OwnerAvatarMap>({});
   const [guestOptions, setGuestOptions] = useState<
     { id: string; label: string }[]
   >([]);
@@ -564,7 +495,13 @@ export default function MessagesScreen() {
     const typeParam =
       typeof searchParams.type === "string" ? searchParams.type.trim() : "";
     const messageParam =
-      typeof searchParams.message === "string" ? searchParams.message.trim() : "";
+      typeof searchParams.message === "string"
+        ? searchParams.message.trim()
+        : "";
+    const composeParam =
+      typeof searchParams.compose === "string"
+        ? searchParams.compose.trim().toLowerCase()
+        : "";
     if (typeParam) {
       const resolved = toMessageType(typeParam);
       if (resolved && getMessageTypeCategory(resolved) !== "Alarm") {
@@ -572,7 +509,19 @@ export default function MessagesScreen() {
       }
     }
     if (messageParam) setHighlightMessageId(messageParam);
-  }, [searchParams.type, searchParams.message]);
+    if (
+      composeParam === "1" ||
+      composeParam === "true" ||
+      composeParam === "new"
+    ) {
+      setActionsSheetOpen(true);
+    }
+  }, [
+    searchParams.type,
+    searchParams.message,
+    searchParams.compose,
+    searchParams.n,
+  ]);
 
   const confirmEmergencySend = useCallback(
     (type: MessageType): Promise<boolean> =>
@@ -629,13 +578,14 @@ export default function MessagesScreen() {
     [messages, zoneFilter, typeFilter, dateFrom, dateTo, search],
   );
 
-  // Load members once so inbox rows can resolve a friendly name for senders
-  // that did not embed a broadcast name.
+  // Load members once so inbox rows can resolve a friendly name / avatar for
+  // senders that did not embed a broadcast name.
   useEffect(() => {
     let active = true;
     void getMembers().then((res) => {
       if (!active) return;
-      const map: OwnerNameMap = {};
+      const names: OwnerNameMap = {};
+      const avatars: OwnerAvatarMap = {};
       (res.data ?? []).forEach((row) => {
         const id = Number(row.id);
         if (!Number.isFinite(id) || id <= 0) return;
@@ -644,9 +594,13 @@ export default function MessagesScreen() {
           `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
           row.email ||
           "";
-        if (name) map[id] = name;
+        if (name) names[id] = name;
+        const avatar =
+          typeof row.avatar_url === "string" ? row.avatar_url.trim() : "";
+        if (avatar) avatars[id] = avatar;
       });
-      setOwnerNames(map);
+      setOwnerNames(names);
+      setOwnerAvatars(avatars);
     });
     return () => {
       active = false;
@@ -764,6 +718,7 @@ export default function MessagesScreen() {
       if (isPrivateMessageType(type as MessageType)) {
         setComposeType(type as MessageType);
         setDraft((settings.quickMessages[type] ?? "").trim());
+        setActionsSheetOpen(false);
         setComposeOpen(true);
         return;
       }
@@ -773,6 +728,7 @@ export default function MessagesScreen() {
         // Types without a preset (e.g. PRIVATE) open the composer instead.
         setComposeType(type as MessageType);
         setDraft("");
+        setActionsSheetOpen(false);
         setComposeOpen(true);
         return;
       }
@@ -804,6 +760,7 @@ export default function MessagesScreen() {
         setQuickStatus(
           `${toMessageTypeLabel(type as MessageType)} sent · ${messagePositionSourceLabel(resolved.source)}`,
         );
+        setActionsSheetOpen(false);
         void refresh();
       } catch (err) {
         const msg =
@@ -833,6 +790,7 @@ export default function MessagesScreen() {
   );
 
   const openCompose = useCallback((type: MessageType) => {
+    setActionsSheetOpen(false);
     setComposeType(type);
     setDraft("");
     setComposeServicePaFields({ subject: "", topic: "", subtopic: "" });
@@ -881,7 +839,9 @@ export default function MessagesScreen() {
     }
 
     if (accessGuest && !composeZoneId) {
-      setComposeStatus("Your account has no network id; cannot message guests.");
+      setComposeStatus(
+        "Your account has no network id; cannot message guests.",
+      );
       return;
     }
 
@@ -921,7 +881,9 @@ export default function MessagesScreen() {
         setDraft("");
         setComposeServicePaFields({ subject: "", topic: "", subtopic: "" });
         setComposeOpen(false);
-        setComposeStatus(`Sent · ${messagePositionSourceLabel(resolved.source)}`);
+        setComposeStatus(
+          `Sent · ${messagePositionSourceLabel(resolved.source)}`,
+        );
         void refresh();
         return;
       }
@@ -972,8 +934,8 @@ export default function MessagesScreen() {
   ]);
 
   const renderQuickActions = () => (
-    <View style={{ paddingHorizontal: 20, marginBottom: 12, gap: 12 }}>
-      <Card style={{ gap: 12 }}>
+    <View style={{ gap: 12 }}>
+      <View style={{ gap: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <BellRing size={18} color={colors.danger} />
           <Text style={{ color: colors.text, fontWeight: "800", fontSize: 14 }}>
@@ -991,8 +953,8 @@ export default function MessagesScreen() {
             />
           ))}
         </View>
-      </Card>
-      <Card style={{ gap: 12 }}>
+      </View>
+      <View style={{ gap: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Megaphone size={18} color={colors.warning} />
           <Text style={{ color: colors.text, fontWeight: "800", fontSize: 14 }}>
@@ -1015,56 +977,14 @@ export default function MessagesScreen() {
             {quickStatus}
           </Text>
         ) : null}
-      </Card>
+      </View>
     </View>
   );
 
   return (
     <GradientBackground>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <ScreenHeader
-          title="Messages"
-          subtitle={realtimeHint}
-          right={
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-            >
-              <AlertBellButton />
-              {isAdministrator ? (
-                <Pressable
-                  onPress={() =>
-                    router.push("/(tabs)/emergency-log" as unknown as Href)
-                  }
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 21,
-                    backgroundColor: colors.bgCard,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Siren size={20} color={colors.danger} />
-                </Pressable>
-              ) : null}
-              <Pressable
-                onPress={() => openCompose("SERVICE")}
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 21,
-                  backgroundColor: colors.accent,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Plus size={22} color="#fff" />
-              </Pressable>
-            </View>
-          }
-        />
+        <AppHeader title="Messages" subtitle={realtimeHint} />
 
         {loading && messages.length === 0 ? (
           <View
@@ -1081,199 +1001,40 @@ export default function MessagesScreen() {
                 item={item}
                 selfOwnerId={ownerId}
                 selfBroadcastName={selfBroadcastName}
+                selfAvatarUrl={user?.avatar_url}
                 ownerNames={ownerNames}
+                ownerAvatars={ownerAvatars}
+                senderOnline={
+                  typeof item.sender_id === "number" && item.sender_id > 0
+                    ? isOnline(item.sender_id)
+                    : false
+                }
                 zoneNames={zoneNames}
                 highlighted={highlightMessageId === item.id}
               />
             )}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
+            contentContainerStyle={{
+              paddingHorizontal: 20,
+              paddingBottom: 130,
+            }}
             ListHeaderComponent={
               <View>
-                {renderQuickActions()}
-                <Card style={{ marginBottom: 14, gap: 12 }}>
-                  <TextInput
-                    value={search}
-                    onChangeText={setSearch}
-                    placeholder="Search messages…"
-                    placeholderTextColor={colors.textDim}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      backgroundColor: colors.bgElevated,
-                      borderRadius: 12,
-                      paddingHorizontal: 14,
-                      paddingVertical: 11,
-                      color: colors.text,
-                      fontSize: 15,
-                    }}
-                  />
-
-                  <View>
-                    <Text
-                      style={{
-                        color: colors.textMuted,
-                        fontSize: 11,
-                        fontWeight: "700",
-                        letterSpacing: 0.8,
-                        textTransform: "uppercase",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Zone
-                    </Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={{ gap: 8, paddingRight: 4 }}
-                    >
-                      <Pressable onPress={() => setZoneFilter("all")}>
-                        <Chip
-                          label="All zones"
-                          active={zoneFilter === "all"}
-                          style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                        />
-                      </Pressable>
-                      {allZoneIds.map((zone) => (
-                        <Pressable key={zone} onPress={() => setZoneFilter(zone)}>
-                          <Chip
-                            label={zoneNames.get(zone) ?? zone}
-                            active={zoneFilter === zone}
-                            style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                          />
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  </View>
-
-                  <View>
-                    <Text
-                      style={{
-                        color: colors.textMuted,
-                        fontSize: 11,
-                        fontWeight: "700",
-                        letterSpacing: 0.8,
-                        textTransform: "uppercase",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Type
-                    </Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={{ gap: 8, paddingRight: 4 }}
-                    >
-                      <Pressable onPress={() => setTypeFilter("all")}>
-                        <Chip
-                          label="All types"
-                          active={typeFilter === "all"}
-                          style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                        />
-                      </Pressable>
-                      {inboxTypeOptions.map((option) => (
-                        <Pressable
-                          key={option.type}
-                          onPress={() => setTypeFilter(option.type)}
-                        >
-                          <Chip
-                            label={option.label}
-                            active={typeFilter === option.type}
-                            style={{ paddingHorizontal: 12, paddingVertical: 7 }}
-                          />
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  </View>
-
-                  <View>
-                    <Text
-                      style={{
-                        color: colors.textMuted,
-                        fontSize: 11,
-                        fontWeight: "700",
-                        letterSpacing: 0.8,
-                        textTransform: "uppercase",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Date range
-                    </Text>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <TextInput
-                        value={dateFrom}
-                        onChangeText={setDateFrom}
-                        placeholder="From"
-                        placeholderTextColor={colors.textDim}
-                        autoCapitalize="none"
-                        style={{
-                          flex: 1,
-                          borderWidth: 1,
-                          borderColor: colors.border,
-                          backgroundColor: colors.bgElevated,
-                          borderRadius: 12,
-                          paddingHorizontal: 12,
-                          paddingVertical: 10,
-                          color: colors.text,
-                          fontSize: 13,
-                        }}
-                      />
-                      <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                        to
-                      </Text>
-                      <TextInput
-                        value={dateTo}
-                        onChangeText={setDateTo}
-                        placeholder="To"
-                        placeholderTextColor={colors.textDim}
-                        autoCapitalize="none"
-                        style={{
-                          flex: 1,
-                          borderWidth: 1,
-                          borderColor: colors.border,
-                          backgroundColor: colors.bgElevated,
-                          borderRadius: 12,
-                          paddingHorizontal: 12,
-                          paddingVertical: 10,
-                          color: colors.text,
-                          fontSize: 13,
-                        }}
-                      />
-                    </View>
-                  </View>
-
-                  {(search.trim() ||
-                    zoneFilter !== "all" ||
-                    typeFilter !== "all" ||
-                    dateFrom ||
-                    dateTo) && (
-                    <Pressable
-                      onPress={() => {
-                        setSearch("");
-                        setZoneFilter("all");
-                        setTypeFilter("all");
-                        setDateFrom("");
-                        setDateTo("");
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: colors.accent,
-                          fontSize: 13,
-                          fontWeight: "600",
-                          textAlign: "center",
-                        }}
-                      >
-                        Clear filters
-                      </Text>
-                    </Pressable>
-                  )}
-                </Card>
+                <MessageInboxFilterBar
+                  search={search}
+                  onSearchChange={setSearch}
+                  zoneFilter={zoneFilter}
+                  onZoneFilterChange={setZoneFilter}
+                  zoneIds={allZoneIds}
+                  zoneNames={zoneNames}
+                  typeFilter={typeFilter}
+                  onTypeFilterChange={setTypeFilter}
+                  typeOptions={inboxTypeOptions}
+                  searchPlaceholder="Search messages…"
+                  dateFrom={dateFrom}
+                  onDateFromChange={setDateFrom}
+                  dateTo={dateTo}
+                  onDateToChange={setDateTo}
+                />
                 {error ? (
                   <Text style={{ color: colors.danger, marginBottom: 8 }}>
                     {error}
@@ -1291,12 +1052,68 @@ export default function MessagesScreen() {
             ListEmptyComponent={
               <Card>
                 <Text style={{ color: colors.textMuted, textAlign: "center" }}>
-                  No messages yet. Use a quick alert above or compose a message.
+                  No messages yet. Tap + to send a quick alert or compose a
+                  message.
                 </Text>
               </Card>
             }
           />
         )}
+
+        <Modal
+          visible={actionsSheetOpen}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setActionsSheetOpen(false)}
+        >
+          <Pressable
+            onPress={() => setActionsSheetOpen(false)}
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(15, 44, 92, 0.4)",
+              justifyContent: "flex-end",
+            }}
+          >
+            <Pressable
+              onPress={(e) => e.stopPropagation()}
+              style={{
+                backgroundColor: colors.bgElevated,
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                paddingHorizontal: 20,
+                paddingTop: 12,
+                paddingBottom: Math.max(bottomInset, 16) + 12,
+                borderTopWidth: 1,
+                borderColor: colors.border,
+                maxHeight: "82%",
+              }}
+            >
+              <View style={{ alignItems: "center", paddingBottom: 10 }}>
+                <View
+                  style={{
+                    width: 40,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: colors.borderStrong,
+                  }}
+                />
+              </View>
+              <Text
+                style={{
+                  color: colors.text,
+                  fontSize: 18,
+                  fontWeight: "700",
+                  marginBottom: 14,
+                }}
+              >
+                New message
+              </Text>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                {renderQuickActions()}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         <Modal visible={composeOpen} animationType="slide" transparent>
           <View
@@ -1560,7 +1377,9 @@ export default function MessagesScreen() {
                             >
                               <Chip
                                 label={topic.label}
-                                active={composeServicePaFields.topic === topic.id}
+                                active={
+                                  composeServicePaFields.topic === topic.id
+                                }
                               />
                             </Pressable>
                           ))}
@@ -1570,7 +1389,9 @@ export default function MessagesScreen() {
                           composeServicePaFields.topic,
                         ) ? (
                           <>
-                            <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                            <Text
+                              style={{ color: colors.textMuted, fontSize: 12 }}
+                            >
                               Products subtopic
                             </Text>
                             <ScrollView

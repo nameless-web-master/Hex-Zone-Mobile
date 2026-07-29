@@ -117,6 +117,20 @@ export const ADMIN_ASSIGNABLE_ACCOUNT_TYPES: {
   { value: "ENHANCED_PLUS", apiValue: "enhanced_plus", label: "Enhanced+" },
 ];
 
+/** Tiers a non–system-admin account owner may assign to themselves. */
+export const OWNER_SELF_ASSIGNABLE_ACCOUNT_TYPES =
+  ADMIN_ASSIGNABLE_ACCOUNT_TYPES.filter((option) => option.value !== "PRIVATE");
+
+export function toApiAccountType(type: NormalizedAccountType): string {
+  const match = ADMIN_ASSIGNABLE_ACCOUNT_TYPES.find((o) => o.value === type);
+  return match?.apiValue ?? type.toLowerCase();
+}
+
+export function canEditOwnAccountType(params: {
+  role?: string | null;
+}): boolean {
+  return String(params.role ?? "").toLowerCase() === "administrator";
+}
 export function deviceLimitDescription(type: NormalizedAccountType): string {
   switch (type) {
     case "PRIVATE":

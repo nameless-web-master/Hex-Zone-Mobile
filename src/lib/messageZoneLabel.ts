@@ -118,3 +118,19 @@ export function messageZoneLabel(
 
   return zoneId || "Zone";
 }
+
+/** Network / zone id for footer display (not the friendly zone name). */
+export function messageNetworkId(
+  message: Message,
+  options?: {
+    viewerOwnerId?: number | null;
+  },
+): string {
+  const fromMeta = relevantZoneFromMetadata(message, options?.viewerOwnerId);
+  return (
+    message.relevant_zone_network_id?.trim() ||
+    fromMeta.relevant_zone_network_id?.trim() ||
+    message.zone_id?.trim() ||
+    ""
+  );
+}

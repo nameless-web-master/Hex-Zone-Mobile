@@ -13,6 +13,9 @@ export type Member = {
   zones?: string[];
   role?: "administrator" | "user" | string;
   active?: boolean;
+  online?: boolean;
+  avatar_url?: string | null;
+  lastSeen?: string | null;
 };
 
 function normalizeMember(raw: unknown): Member | null {
@@ -63,6 +66,19 @@ function normalizeMember(raw: unknown): Member | null {
       : [],
     role: typeof row.role === "string" ? row.role : undefined,
     active: typeof row.active === "boolean" ? row.active : true,
+    online: typeof row.online === "boolean" ? row.online : false,
+    avatar_url:
+      typeof row.avatar_url === "string"
+        ? row.avatar_url
+        : typeof row.avatarUrl === "string"
+          ? row.avatarUrl
+          : null,
+    lastSeen:
+      typeof row.lastSeen === "string"
+        ? row.lastSeen
+        : typeof row.last_seen === "string"
+          ? row.last_seen
+          : null,
   };
 }
 
@@ -112,5 +128,27 @@ export async function setMemberAccountType(
     method: "PATCH",
     url: `/owners/${encodeURIComponent(String(memberId))}`,
     data: { account_type: accountType },
+  });
+}
+
+export type OwnerProfileUpdate = {
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  /** Pricing tier (private, private_plus, exclusive, enhanced, enhanced_plus). */
+  account_type?: string;
+  /** Pass empty string to clear a stored avatar. */
+  avatar_url?: string | null;
+};
+
+/** PATCH /owners/{id} — update the caller's (or an admin-managed) profile. */
+export async function updateOwnerProfile(
+  ownerId: string | number,
+  payload: OwnerProfileUpdate,
+) {
+  return request<Member>({
+    method: "PATCH",
+    url: `/owners/${encodeURIComponent(String(ownerId))}`,
+    data: payload,
   });
 }
