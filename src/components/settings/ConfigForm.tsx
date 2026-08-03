@@ -162,9 +162,10 @@ export function ConfigForm() {
       <SectionTitle>Smart-home integration</SectionTitle>
       <Card style={{ gap: 14 }}>
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          First add a smart-home hub on the Devices page (DEV- ID). Then copy the
-          API key and Network ID onto that hub. Set a webhook for push delivery, or
-          leave it blank and rely on periodical polling.
+          First add a smart-home hub on the Devices page (DEV- ID). Copy the API
+          key and Network ID onto that hub. To receive Hex Zone alarms on the hub,
+          paste the hub’s public webhook URL below — Hex Zone will POST alarms
+          there. Leave webhook blank if the hub only polls.
         </Text>
         <Field
           label="Hardware identification (HID)"
@@ -211,10 +212,12 @@ export function ConfigForm() {
               sharedNotification: { ...draft.sharedNotification, webhook: v },
             })
           }
-          placeholder="https://your-device.local/alert"
+          placeholder="https://hub.example.com/hooks/hex-zone"
         />
         <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          Optional callback URL on the device to accept pushed notifications.
+          When set, Hex Zone POSTs SENSOR/PANIC/WELLNESS and other zone alerts to
+          this URL (JSON event SMART_HOME_ALARM). Use a publicly reachable hub
+          URL.
         </Text>
         <Field
           label="Periodical check (sec)"
@@ -231,7 +234,7 @@ export function ConfigForm() {
           keyboardType="numeric"
         />
         <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          How often the device polls the server when no webhook is set.
+          Hint for hubs that poll instead of (or in addition to) webhook push.
         </Text>
         <Button
           label={
