@@ -134,15 +134,15 @@ export function canEditOwnAccountType(params: {
 export function deviceLimitDescription(type: NormalizedAccountType): string {
   switch (type) {
     case "PRIVATE":
-      return "Private accounts allow 1 registered device per user. You can switch devices from the login screen or Devices settings.";
+      return "Private accounts allow 1 smart-home hub. Phones and browsers register separately as login sessions and do not use that slot.";
     case "PRIVATE_PLUS":
-      return "Private+ accounts allow up to 10 registered devices per user. Only one device can be active at a time.";
+      return "Private+ accounts allow up to 10 smart-home hubs. Phones/browsers are separate login sessions; only one phone/web session can be active at a time.";
     case "EXCLUSIVE":
-      return "Exclusive accounts allow 1 active device per user at a time. Use \"Use this device instead\" on login to switch phones.";
+      return "Exclusive accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones.";
     case "ENHANCED":
-      return "Enhanced accounts allow 1 active device per user at a time. Use \"Use this device instead\" on login to switch phones.";
+      return "Enhanced accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones.";
     case "ENHANCED_PLUS":
-      return "Enhanced+ accounts have no device cap, but only one session can be active at a time.";
+      return "Enhanced+ accounts have no smart-home hub cap. Only one phone/web session can be active at a time.";
   }
 }
 

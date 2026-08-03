@@ -3,20 +3,32 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { AlertTriangle, CircleDot, MapPin, Smartphone, User } from "lucide-react-native";
+import {
+  AlertTriangle,
+  CircleDot,
+  Home,
+  MapPin,
+  Plus,
+  Smartphone,
+  User,
+} from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
 import { ScreenHeader } from "@/components/ui/ScreenHeader";
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { useAuth } from "@/context/AuthContext";
-import { getDevices, type DeviceRecord } from "@/api/devices";
+import { createDevice, getDevices, type DeviceRecord } from "@/api/devices";
 import {
   accountTypeLabel,
   deviceLimitDescription,
@@ -26,6 +38,8 @@ import {
 } from "@/lib/accountLimits";
 import {
   deriveDeviceOnline,
+  isClientSessionHid,
+  isSmartHomeHid,
   removeDevice,
   signOutDevice,
 } from "@/lib/deviceSync";
@@ -51,6 +65,38 @@ function formatLastSeen(value?: string): string {
   return t.toLocaleString();
 }
 
+function generateSmartHomeHid(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i += 1) {
+    s += chars[Math.floor(Math.random() * chars.length)]!;
+  }
+  return `DEV-${s}`;
+}
+
+/** Normalize to DEV- + alphanumeric (min 3 chars after prefix). */
+function normalizeSmartHomeHid(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  const upper = raw.toUpperCase();
+  if (upper.startsWith("MOB-") || upper.startsWith("WEB-")) return null;
+  let suffix: string;
+  if (upper.startsWith("DEV-")) {
+    suffix = upper.slice(4).replace(/[^A-Z0-9]/g, "");
+  } else {
+    suffix = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  }
+  if (suffix.length < 3) return null;
+  return `DEV-${suffix}`;
+}
+
+function deviceKindLabel(hid: string): string {
+  const upper = String(hid).toUpperCase();
+  if (upper.startsWith("MOB-")) return "Phone";
+  if (upper.startsWith("WEB-")) return "Browser";
+  return "Smart home";
+}
+
 function DeviceRow({
   device,
   isThisPhone,
@@ -67,6 +113,8 @@ function DeviceRow({
   const online = deriveDeviceOnline(device);
   const owner = ownerLabel(device);
   const zone = zoneLabel(device.h3_cell_id);
+  const kind = deviceKindLabel(device.hid);
+  const isHub = isSmartHomeHid(device.hid);
   return (
     <Card
       style={{
@@ -86,19 +134,22 @@ function DeviceRow({
             justifyContent: "center",
           }}
         >
-          <Smartphone size={22} color={colors.accent} />
+          {isHub ? (
+            <Home size={22} color={colors.accent} />
+          ) : (
+            <Smartphone size={22} color={colors.accent} />
+          )}
         </View>
         <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <Text
               style={{ color: colors.text, fontSize: 16, fontWeight: "700" }}
               numberOfLines={1}
             >
               {device.name ?? device.hid}
             </Text>
-            {isThisPhone ? (
-              <Chip label="This phone" tone="default" />
-            ) : null}
+            {isThisPhone ? <Chip label="This phone" tone="default" /> : null}
+            <Chip label={kind} tone={isHub ? "default" : "muted"} />
           </View>
           <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
             HID {device.hid}
@@ -158,7 +209,7 @@ function DeviceRow({
 
       {!isThisPhone ? (
         <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
-          {online ? (
+          {online && isClientSessionHid(device.hid) ? (
             <Pressable
               onPress={onSignOut}
               disabled={busy}
@@ -200,6 +251,142 @@ function DeviceRow({
   );
 }
 
+function AddSmartHomeModal({
+  visible,
+  submitting,
+  error,
+  name,
+  hid,
+  address,
+  onChangeName,
+  onChangeHid,
+  onChangeAddress,
+  onGenerateHid,
+  onClose,
+  onSubmit,
+}: {
+  visible: boolean;
+  submitting: boolean;
+  error: string | null;
+  name: string;
+  hid: string;
+  address: string;
+  onChangeName: (v: string) => void;
+  onChangeHid: (v: string) => void;
+  onChangeAddress: (v: string) => void;
+  onGenerateHid: () => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "rgba(8, 14, 28, 0.72)",
+          justifyContent: "flex-end",
+        }}
+      >
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+        <View
+          style={{
+            backgroundColor: colors.bgElevated,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            borderWidth: 1,
+            borderColor: colors.border,
+            maxHeight: "88%",
+            paddingBottom: 24,
+          }}
+        >
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingTop: 18,
+              paddingBottom: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+              gap: 6,
+            }}
+          >
+            <Text style={{ color: colors.text, fontSize: 18, fontWeight: "700" }}>
+              Add smart-home device
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 13, lineHeight: 18 }}>
+              Register a hub with a DEV- ID. Then open Account settings → Smart-home
+              integration to copy the API key and Network ID onto the device.
+            </Text>
+          </View>
+          <ScrollView
+            contentContainerStyle={{ padding: 20, gap: 14 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Input
+              label="Device name"
+              value={name}
+              onChangeText={onChangeName}
+              placeholder="Living room hub"
+              autoCapitalize="words"
+            />
+            <View style={{ gap: 8 }}>
+              <Input
+                label="Hardware ID (HID)"
+                value={hid}
+                onChangeText={onChangeHid}
+                placeholder="DEV-A1B2C3"
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+              <Pressable
+                onPress={onGenerateHid}
+                style={{
+                  alignSelf: "flex-start",
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text style={{ color: colors.accent, fontSize: 13, fontWeight: "600" }}>
+                  Generate HID
+                </Text>
+              </Pressable>
+              <Text style={{ color: colors.textDim, fontSize: 11 }}>
+                Use Generate or enter DEV- plus at least 3 letters/numbers. Do not use
+                MOB- or WEB- (those are phone/browser sessions).
+              </Text>
+            </View>
+            <Input
+              label="Address (optional)"
+              value={address}
+              onChangeText={onChangeAddress}
+              placeholder="Home address"
+            />
+            {error ? (
+              <Text style={{ color: colors.danger, fontSize: 13 }}>{error}</Text>
+            ) : null}
+            <Button
+              label={submitting ? "Saving…" : "Save smart-home device"}
+              onPress={onSubmit}
+              loading={submitting}
+              disabled={submitting}
+              fullWidth
+            />
+            <Button
+              label="Cancel"
+              variant="ghost"
+              onPress={onClose}
+              disabled={submitting}
+              fullWidth
+            />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function DevicesScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -208,6 +395,12 @@ export default function DevicesScreen() {
   const [error, setError] = useState<string | null>(null);
   const [localHid, setLocalHid] = useState("");
   const [actionId, setActionId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addSubmitting, setAddSubmitting] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addName, setAddName] = useState("");
+  const [addHid, setAddHid] = useState(generateSmartHomeHid());
+  const [addAddress, setAddAddress] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -244,6 +437,14 @@ export default function DevicesScreen() {
     return devices.filter((d) => String(d.owner_id ?? "") === ownerId);
   }, [devices, ownerId]);
 
+  const smartHomeCount = useMemo(
+    () => myDevices.filter((d) => isSmartHomeHid(d.hid)).length,
+    [myDevices],
+  );
+
+  const atSmartHomeLimit =
+    Number.isFinite(limit) && smartHomeCount >= limit;
+
   const sorted = useMemo(() => {
     return [...devices].sort((a, b) => {
       const at = new Date(a.last_seen ?? a.updated_at ?? 0).getTime();
@@ -252,10 +453,66 @@ export default function DevicesScreen() {
     });
   }, [devices]);
 
+  const openAddModal = () => {
+    setAddError(null);
+    setAddName("");
+    setAddHid(generateSmartHomeHid());
+    setAddAddress("");
+    setAddOpen(true);
+  };
+
+  const handleAddSmartHome = async () => {
+    const normalizedHid = normalizeSmartHomeHid(addHid);
+    if (!normalizedHid) {
+      setAddError("Enter a valid HID (DEV- plus at least 3 letters or numbers).");
+      return;
+    }
+    if (devices.some((d) => String(d.hid).toUpperCase() === normalizedHid)) {
+      setAddError("This Device ID is already in use.");
+      return;
+    }
+    if (atSmartHomeLimit) {
+      setAddError(deviceLimitDescription(accountType));
+      return;
+    }
+    const label =
+      addName.trim() ||
+      `${(user?.name?.split(/\s+/)[0] || "Home").replace(/[^a-zA-Z]/g, "") || "Home"} hub`;
+
+    setAddSubmitting(true);
+    setAddError(null);
+    try {
+      const result = await createDevice({
+        hid: normalizedHid,
+        name: label,
+        address: addAddress.trim() || undefined,
+        enable_notification: true,
+        propagate_enabled: true,
+        is_online: false,
+        active: true,
+      });
+      if (result.error) {
+        setAddError(result.error);
+        return;
+      }
+      setAddOpen(false);
+      await load();
+      Alert.alert(
+        "Smart-home device added",
+        `HID ${normalizedHid} is registered. Open Account settings → Smart-home integration to copy the API key and Network ID to your hub.`,
+      );
+    } finally {
+      setAddSubmitting(false);
+    }
+  };
+
   const confirmRemove = (device: DeviceRecord) => {
+    const isHub = isSmartHomeHid(device.hid);
     Alert.alert(
       "Remove device?",
-      `Remove "${device.name ?? device.hid}" from your account? You can sign in again on that phone later.`,
+      isHub
+        ? `Remove smart-home hub "${device.name ?? device.hid}"? Smart-home settings HID will update after you refresh settings.`
+        : `Remove "${device.name ?? device.hid}" from your account? You can sign in again on that phone later.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -304,7 +561,7 @@ export default function DevicesScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
         <ScreenHeader
           title="Devices"
-          subtitle={`${accountTypeLabel(accountType)} account · ${formatLimit(myDevices.length, limit)} devices`}
+          subtitle={`${accountTypeLabel(accountType)} · ${formatLimit(smartHomeCount, limit)} smart-home`}
           showBack
           onBack={() => router.replace("/(tabs)/settings")}
         />
@@ -331,6 +588,20 @@ export default function DevicesScreen() {
               {deviceLimitDescription(accountType)}
             </Text>
           </Card>
+
+          <Button
+            label="Add smart-home device"
+            leftIcon={<Plus size={18} color="#fff" />}
+            onPress={openAddModal}
+            disabled={atSmartHomeLimit}
+            fullWidth
+            size="md"
+          />
+          {atSmartHomeLimit ? (
+            <Text style={{ color: colors.textDim, fontSize: 12 }}>
+              Smart-home limit reached for this account. Remove a hub to add another.
+            </Text>
+          ) : null}
         </View>
 
         {error ? (
@@ -372,13 +643,30 @@ export default function DevicesScreen() {
             ListEmptyComponent={
               <Card>
                 <Text style={{ color: colors.textMuted, textAlign: "center" }}>
-                  No devices registered yet. This phone registers automatically on
-                  login.
+                  No devices yet. This phone registers automatically on login. Tap
+                  Add smart-home device to register a hub.
                 </Text>
               </Card>
             }
           />
         )}
+
+        <AddSmartHomeModal
+          visible={addOpen}
+          submitting={addSubmitting}
+          error={addError}
+          name={addName}
+          hid={addHid}
+          address={addAddress}
+          onChangeName={setAddName}
+          onChangeHid={setAddHid}
+          onChangeAddress={setAddAddress}
+          onGenerateHid={() => setAddHid(generateSmartHomeHid())}
+          onClose={() => {
+            if (!addSubmitting) setAddOpen(false);
+          }}
+          onSubmit={() => void handleAddSmartHome()}
+        />
       </SafeAreaView>
     </GradientBackground>
   );

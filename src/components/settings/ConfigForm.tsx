@@ -162,19 +162,20 @@ export function ConfigForm() {
       <SectionTitle>Smart-home integration</SectionTitle>
       <Card style={{ gap: 14 }}>
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          Configure how your smart-home device receives zone alerts. Use the
-          API key and network id on the device. Set a webhook for push delivery, or
+          First add a smart-home hub on the Devices page (DEV- ID). Then copy the
+          API key and Network ID onto that hub. Set a webhook for push delivery, or
           leave it blank and rely on periodical polling.
         </Text>
         <Field
           label="Hardware identification (HID)"
           value={draft.sharedNotification.hid}
           onChangeText={() => {}}
-          placeholder="123456789-ABCD01"
+          placeholder="DEV-A1B2C3"
           editable={false}
         />
         <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          Smart-home device id registered in Device Manager.
+          Filled from your registered smart-home device (Devices → Add smart-home
+          device). MOB-/WEB- login clients are ignored here.
         </Text>
         <Field
           label="Network ID"

@@ -60,8 +60,20 @@ function deviceLastSeenMs(device: DeviceRecord): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-/** Whether another device currently holds the account session (login gate). */
+/** Phone (MOB-) and browser (WEB-) login clients — not smart-home hubs. */
+export function isClientSessionHid(hid?: string | null): boolean {
+  const upper = String(hid ?? "").trim().toUpperCase();
+  return upper.startsWith("MOB-") || upper.startsWith("WEB-");
+}
+
+export function isSmartHomeHid(hid?: string | null): boolean {
+  const upper = String(hid ?? "").trim().toUpperCase();
+  return Boolean(upper) && !isClientSessionHid(upper);
+}
+
+/** Whether another phone/web device currently holds the account session. */
 export function isDeviceSessionBlocking(device: DeviceRecord): boolean {
+  if (!isClientSessionHid(device.hid)) return false;
   return device.is_online === true;
 }
 
