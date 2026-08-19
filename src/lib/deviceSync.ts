@@ -8,7 +8,7 @@ import {
   type DeviceRecord,
 } from "@/api/devices";
 import { normalizeAccountType, type NormalizedAccountType } from "@/lib/accountLimits";
-import { getOrCreateDeviceHid } from "@/lib/storage";
+import { getOrCreateDeviceHid, getToken } from "@/lib/storage";
 import type { AuthUser } from "@/api/auth";
 
 /** Thrown when login succeeds but another device holds the active session. */
@@ -40,7 +40,7 @@ export const DEVICE_PRESENCE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export const DEVICE_CHANGE_PROMPT_TITLE = "Change the device?";
 export const DEVICE_CHANGE_PROMPT_MESSAGE =
-  "This account is already active on another device. Use this device instead? The other device will be signed out.";
+  "This account is already active on another device. Use this device instead? The other device will be signed out and removed.";
 export const DEVICE_CHANGE_DECLINED_MESSAGE =
   "Login cancelled. Sign out on the other device first, or choose to change the device when prompted.";
 export const DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE =
@@ -136,6 +136,7 @@ function mapCreateError(error: string): DeviceSyncResult {
 }
 
 export async function setCurrentDeviceOffline(): Promise<void> {
+  if (!(await getToken())) return;
   const localHid = await getOrCreateDeviceHid();
   const devices = await getDevices();
   const existing = (devices.data ?? []).find(

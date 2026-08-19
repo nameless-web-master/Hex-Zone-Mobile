@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useRouter, type Href } from "expo-router";
-import { Home, Plus, QrCode, UserPlus, Users } from "lucide-react-native";
+import { Home, Map, Plus, QrCode, UserPlus, Users } from "lucide-react-native";
 import { useAuth } from "@/context/AuthContext";
 import { useBottomSafeInset } from "@/hooks/useBottomSafeInset";
 import { colors } from "@/theme/colors";
@@ -14,6 +14,8 @@ function iconForRoute(name: string, color: string, size: number) {
   switch (name) {
     case "index":
       return <Home size={size} color={color} strokeWidth={2.25} />;
+    case "zones":
+      return <Map size={size} color={color} strokeWidth={2.25} />;
     case "members":
       return <Users size={size} color={color} strokeWidth={2.25} />;
     case "access-admin":
@@ -48,7 +50,7 @@ export function FloatingTabBar({
 
   const openNewMessage = () => {
     router.push({
-      pathname: "/(tabs)/messages",
+      pathname: "/(tabs)",
       params: {
         compose: "1",
         n: String(Date.now()),

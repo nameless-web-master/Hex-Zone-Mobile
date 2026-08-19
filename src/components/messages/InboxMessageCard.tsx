@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { initialsForUser } from "@/components/ui/ProfileAvatarButton";
 import type { Message } from "@/api/messages";
+import { MessageImageGallery } from "@/components/messages/MessageImageGallery";
 import { toMessageTypeLabel } from "@/lib/messageTypes";
 import {
   formatMessageCoordinatesLabel,
@@ -39,6 +40,13 @@ export type InboxMessageCardProps = {
   item: Message;
   /** Display name shown in the header (broadcast / sender). */
   userName: string;
+  /**
+   * Real account name for avatar initials when there is no photo.
+   * Falls back to `userName` unless that label is the own-message "ME".
+   */
+  avatarName?: string | null;
+  /** Optional email used when `avatarName` is empty. */
+  avatarEmail?: string | null;
   /** Sender profile image URL when available. */
   avatarUrl?: string | null;
   /** Live online presence for the sender (green/red avatar dot). */
@@ -53,14 +61,16 @@ export type InboxMessageCardProps = {
 
 function SenderAvatar({
   name,
+  email,
   avatarUrl,
   online = false,
 }: {
   name: string;
+  email?: string | null;
   avatarUrl?: string | null;
   online?: boolean;
 }) {
-  const initials = initialsForUser(name);
+  const initials = initialsForUser(name, email);
   const displayUri = useResolvedAvatarUri(avatarUrl);
   const [imageFailed, setImageFailed] = useState(false);
   const hasImage =
@@ -133,6 +143,8 @@ function typeTone(item: Message): ChipTone {
 export function InboxMessageCard({
   item,
   userName,
+  avatarName = null,
+  avatarEmail = null,
   avatarUrl = null,
   online = false,
   selfOwnerId = null,
@@ -192,7 +204,15 @@ export function InboxMessageCard({
           gap: 12,
         }}
       >
-        <SenderAvatar name={userName} avatarUrl={avatarUrl} online={!!online} />
+        <SenderAvatar
+          name={
+            (avatarName ?? "").trim() ||
+            (userName.trim().toUpperCase() === "ME" ? "" : userName)
+          }
+          email={avatarEmail}
+          avatarUrl={avatarUrl}
+          online={!!online}
+        />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text
             style={{
@@ -242,7 +262,7 @@ export function InboxMessageCard({
           >
             {item.message}
           </Text>
-        ) : !item.subject ? (
+        ) : !item.subject && (item.message || !item.images?.length) ? (
           <Text
             style={{
               color: bodyColor,
@@ -253,6 +273,9 @@ export function InboxMessageCard({
           >
             {item.message || "—"}
           </Text>
+        ) : null}
+        {item.images?.length ? (
+          <MessageImageGallery uris={item.images} bleed />
         ) : null}
       </View>
 

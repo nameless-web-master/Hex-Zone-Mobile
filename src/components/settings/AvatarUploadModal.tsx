@@ -14,7 +14,14 @@ import { colors } from "@/theme/colors";
 
 type Mode = "chooser" | "camera" | "gallery" | "crop";
 
-const GALLERY_HTML = `<!doctype html>
+function buildGalleryHtml(options: { multiple: boolean; maxCount: number }) {
+  const multiple = options.multiple;
+  const maxCount = Math.max(1, Math.min(5, Math.floor(options.maxCount)));
+  const multipleAttr = multiple ? " multiple" : "";
+  const lead = multiple
+    ? `Select up to ${maxCount} photos at once.`
+    : "Pick an existing photo from your device library.";
+  return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -61,13 +68,15 @@ const GALLERY_HTML = `<!doctype html>
 <body>
   <div class="card">
     <h1>Choose from gallery</h1>
-    <p>Pick an existing photo from your device library.</p>
-    <input id="file" type="file" accept="image/*" />
+    <p>${lead}</p>
+    <input id="file" type="file" accept="image/*"${multipleAttr} />
     <button id="pick" type="button">Browse photos</button>
     <div class="hint" id="status"></div>
   </div>
   <script>
     (function () {
+      var multiple = ${multiple ? "true" : "false"};
+      var maxCount = ${maxCount};
       var input = document.getElementById('file');
       var button = document.getElementById('pick');
       var status = document.getElementById('status');
@@ -77,45 +86,68 @@ const GALLERY_HTML = `<!doctype html>
         }
       }
       function setStatus(text) { status.textContent = text || ''; }
-      function readFile(file) {
-        if (!file) return;
-        if (!String(file.type || '').startsWith('image/')) {
-          post({ type: 'error', message: 'Please choose an image file.' });
+      function readFiles(list) {
+        var files = [];
+        for (var i = 0; i < (list ? list.length : 0); i++) {
+          var f = list[i];
+          if (f && String(f.type || '').startsWith('image/')) files.push(f);
+        }
+        if (!files.length) {
+          post({ type: 'error', message: 'Please choose image files.' });
           return;
         }
-        if (file.size > 8 * 1024 * 1024) {
-          post({ type: 'error', message: 'Image is too large (max about 8 MB).' });
-          return;
-        }
+        if (files.length > maxCount) files = files.slice(0, maxCount);
         button.disabled = true;
-        setStatus('Preparing image…');
-        var reader = new FileReader();
-        reader.onerror = function () {
-          button.disabled = false;
-          setStatus('');
-          post({ type: 'error', message: 'Could not read that image.' });
-        };
-        reader.onload = function () {
-          button.disabled = false;
-          setStatus('Opening crop…');
-          post({
-            type: 'image',
-            dataUrl: String(reader.result || ''),
-            mime: file.type || 'image/jpeg',
-            name: file.name || 'avatar.jpg'
-          });
-        };
-        reader.readAsDataURL(file);
+        setStatus(files.length > 1 ? ('Preparing ' + files.length + ' photos…') : 'Preparing image…');
+        var results = [];
+        var idx = 0;
+        function next() {
+          if (idx >= files.length) {
+            button.disabled = false;
+            setStatus('');
+            if (multiple) {
+              for (var p = 0; p < results.length; p++) {
+                post({ type: 'image_item', dataUrl: results[p], index: p, total: results.length });
+              }
+              post({ type: 'images_done', total: results.length });
+            } else post({
+              type: 'image',
+              dataUrl: results[0] || '',
+              mime: files[0] && files[0].type || 'image/jpeg',
+              name: files[0] && files[0].name || 'avatar.jpg'
+            });
+            return;
+          }
+          var file = files[idx++];
+          if (file.size > 8 * 1024 * 1024) {
+            button.disabled = false;
+            setStatus('');
+            post({ type: 'error', message: 'One image is too large (max about 8 MB).' });
+            return;
+          }
+          var reader = new FileReader();
+          reader.onerror = function () {
+            button.disabled = false;
+            setStatus('');
+            post({ type: 'error', message: 'Could not read that image.' });
+          };
+          reader.onload = function () {
+            var dataUrl = String(reader.result || '');
+            if (dataUrl) results.push(dataUrl);
+            next();
+          };
+          reader.readAsDataURL(file);
+        }
+        next();
       }
       button.addEventListener('click', function () { input.click(); });
-      input.addEventListener('change', function () {
-        readFile(input.files && input.files[0]);
-      });
+      input.addEventListener('change', function () { readFiles(input.files); });
       setTimeout(function () { input.click(); }, 250);
     })();
   </script>
 </body>
 </html>`;
+}
 
 /** Stage-only crop UI. Zoom / Use photo live in native footer so they stay visible. */
 function buildCropHtml(dataUrl: string): string {
@@ -380,7 +412,15 @@ type AvatarUploadModalProps = {
   uploading?: boolean;
   onClose: () => void;
   onImageSelected: (dataUrl: string) => void;
+  /** Used when the gallery allows multi-select (chat photos). */
+  onImagesSelected?: (dataUrls: string[]) => void;
   onError?: (message: string) => void;
+  /** Skip circular crop (chat photos). */
+  skipCrop?: boolean;
+  /** Max photos to accept from gallery. Defaults to 1. */
+  maxSelection?: number;
+  chooserTitle?: string;
+  chooserLead?: string;
 };
 
 export function AvatarUploadModal({
@@ -388,12 +428,18 @@ export function AvatarUploadModal({
   uploading = false,
   onClose,
   onImageSelected,
+  onImagesSelected,
   onError,
+  skipCrop = false,
+  maxSelection = 1,
+  chooserTitle,
+  chooserLead,
 }: AvatarUploadModalProps) {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
   const cropWebRef = useRef<WebView>(null);
   const handledRef = useRef(false);
+  const pendingImagesRef = useRef<string[]>([]);
   const [mode, setMode] = useState<Mode>("chooser");
   const [galleryReady, setGalleryReady] = useState(false);
   const [cropSource, setCropSource] = useState<string | null>(null);
@@ -406,6 +452,15 @@ export function AvatarUploadModal({
     () => (cropSource ? buildCropHtml(cropSource) : null),
     [cropSource],
   );
+  const allowMultiple = skipCrop && maxSelection > 1;
+  const galleryHtml = useMemo(
+    () =>
+      buildGalleryHtml({
+        multiple: allowMultiple,
+        maxCount: allowMultiple ? maxSelection : 1,
+      }),
+    [allowMultiple, maxSelection],
+  );
 
   useEffect(() => {
     if (!visible) {
@@ -416,6 +471,7 @@ export function AvatarUploadModal({
       setClipping(false);
       setCapturing(false);
       handledRef.current = false;
+      pendingImagesRef.current = [];
     }
   }, [visible]);
 
@@ -426,7 +482,23 @@ export function AvatarUploadModal({
     onImageSelected(dataUrl);
   };
 
+  const emitImages = (dataUrls: string[]) => {
+    if (handledRef.current || uploading) return;
+    const cleaned = dataUrls
+      .filter((url) => typeof url === "string" && url.startsWith("data:image/"))
+      .slice(0, Math.max(1, maxSelection));
+    if (!cleaned.length) return;
+    handledRef.current = true;
+    setClipping(false);
+    if (onImagesSelected) onImagesSelected(cleaned);
+    else onImageSelected(cleaned[0]);
+  };
+
   const openCrop = (dataUrl: string) => {
+    if (skipCrop) {
+      emitCropped(dataUrl);
+      return;
+    }
     handledRef.current = false;
     setCropImageReady(false);
     setClipping(false);
@@ -488,6 +560,7 @@ export function AvatarUploadModal({
       const raw = JSON.parse(event.nativeEvent.data) as {
         type?: string;
         dataUrl?: string;
+        dataUrls?: unknown;
         message?: string;
       };
       if (raw.type === "error") {
@@ -497,6 +570,22 @@ export function AvatarUploadModal({
       }
       if (raw.type === "crop_image_ready") {
         setCropImageReady(true);
+        return;
+      }
+      if (raw.type === "images" && Array.isArray(raw.dataUrls)) {
+        emitImages(
+          raw.dataUrls.filter((item): item is string => typeof item === "string"),
+        );
+        return;
+      }
+      if (raw.type === "image_item" && typeof raw.dataUrl === "string" && raw.dataUrl) {
+        pendingImagesRef.current.push(raw.dataUrl);
+        return;
+      }
+      if (raw.type === "images_done") {
+        const batch = pendingImagesRef.current;
+        pendingImagesRef.current = [];
+        emitImages(batch);
         return;
       }
       if (raw.type === "image" && typeof raw.dataUrl === "string" && raw.dataUrl) {
@@ -535,7 +624,7 @@ export function AvatarUploadModal({
         ? "Browse gallery"
         : mode === "crop"
           ? "Clip photo"
-          : "Upload avatar";
+          : chooserTitle || "Upload avatar";
 
   return (
     <Modal
@@ -578,8 +667,8 @@ export function AvatarUploadModal({
           {!uploading && mode === "chooser" ? (
             <View style={styles.chooser}>
               <Text style={styles.chooserLead}>
-                Take a photo or choose from gallery, then clip the part you
-                want for your avatar.
+                {chooserLead ||
+                  "Take a photo or choose from gallery, then clip the part you want for your avatar."}
               </Text>
               <Pressable
                 style={styles.primaryBtn}
@@ -591,6 +680,7 @@ export function AvatarUploadModal({
                 style={styles.secondaryBtn}
                 onPress={() => {
                   handledRef.current = false;
+                  pendingImagesRef.current = [];
                   setGalleryReady(false);
                   setMode("gallery");
                 }}
@@ -640,7 +730,7 @@ export function AvatarUploadModal({
               ) : null}
               <WebView
                 originWhitelist={["*"]}
-                source={{ html: GALLERY_HTML }}
+                source={{ html: galleryHtml }}
                 onLoadEnd={() => setGalleryReady(true)}
                 onMessage={onWebMessage}
                 style={[styles.web, !galleryReady && styles.webHidden]}

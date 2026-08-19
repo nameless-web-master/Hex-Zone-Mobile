@@ -15,6 +15,7 @@ import {
   extractServicePaFields,
   formatTopicPath,
 } from "@/lib/servicePaTopics";
+import { extractMessageImages } from "@/lib/messageImages";
 
 export type MessageVisibility = MessageScope;
 
@@ -48,6 +49,8 @@ export type Message = {
   relevant_zone_network_id?: string | null;
   relevant_zone_name?: string | null;
   relevant_zone_label?: string | null;
+  /** Up to 5 image URLs (https or data:) attached to the message. */
+  images?: string[];
 };
 
 export type ListMessagesParams = {
@@ -65,6 +68,7 @@ export type SendMessagePayload = {
   guest_id?: string;
   /** Sender's broadcast name, embedded so receivers can show a friendly identity. */
   broadcast_name?: string;
+  images?: string[];
 };
 
 function toLegacyTypeFromVisibility(visibility: unknown): MessageType | null {
@@ -363,8 +367,10 @@ export function normalizeMessage(raw: unknown): Message | null {
     textValue = servicePaFields.description?.trim() ?? "";
   }
 
+  const images = extractMessageImages(row, msgRecord, rowStructuredPayload);
+
   const allowSyntheticBody = type === "PERMISSION" || type === "CHAT";
-  if (textValue.length === 0 && allowSyntheticBody && msgRecord) {
+  if (textValue.length === 0 && allowSyntheticBody && msgRecord && images.length === 0) {
     textValue = permissionBodyFallback(msgRecord).trim();
   }
   if (textValue.length === 0 && type === "PERMISSION") {
@@ -373,7 +379,7 @@ export function normalizeMessage(raw: unknown): Message | null {
   if (textValue.length === 0 && type === "PERMISSION") {
     textValue = "(Permission traffic)";
   }
-  if (textValue.length === 0 && type === "CHAT") {
+  if (textValue.length === 0 && type === "CHAT" && images.length === 0) {
     textValue = "(Chat)";
   }
   if (
@@ -409,7 +415,7 @@ export function normalizeMessage(raw: unknown): Message | null {
     zoneId.trim().length === 0 ||
     resolvedSenderId == null ||
     typeof createdAt !== "string" ||
-    textValue.trim().length === 0
+    (textValue.trim().length === 0 && images.length === 0)
   ) {
     return null;
   }
@@ -495,6 +501,7 @@ export function normalizeMessage(raw: unknown): Message | null {
     ...(relevantZoneNetworkId ? { relevant_zone_network_id: relevantZoneNetworkId } : {}),
     ...(relevantZoneName ? { relevant_zone_name: relevantZoneName } : {}),
     ...(relevantZoneLabel ? { relevant_zone_label: relevantZoneLabel } : {}),
+    ...(images.length ? { images } : {}),
   };
 }
 
@@ -552,10 +559,15 @@ export function messageFromGeoPropagation(
   const type = toMessageType(propagation.type) ?? "UNKNOWN";
   const bodyFromMeta = metadataMsg ?? null;
   const servicePa = extractServicePaFields(bodyFromMeta);
+  const images = extractMessageImages(
+    propagation as unknown as Record<string, unknown>,
+    bodyFromMeta,
+    meta,
+  );
   const text =
     servicePa.description?.trim() ||
     (typeof propagation.text === "string" && propagation.text.trim()) ||
-    String(propagation.type ?? "ALARM");
+    (images.length ? "" : String(propagation.type ?? "ALARM"));
   const createdAt = propagation.created_at;
   const id = propagation.id;
   const receiverFromMeta = meta?.receiver_owner_id ?? meta?.receiver_id;
@@ -615,14 +627,20 @@ export async function listMessages(params: ListMessagesParams) {
 export async function sendMessage(payload: SendMessagePayload) {
   const gid = payload.guest_id?.trim();
   const broadcastName = payload.broadcast_name?.trim();
+  const images = Array.isArray(payload.images)
+    ? payload.images.filter((url) => typeof url === "string" && url.trim()).slice(0, 5)
+    : [];
+  const msg: Record<string, unknown> = {
+    ...(broadcastName ? { broadcast_name: broadcastName } : {}),
+    ...(images.length ? { images } : {}),
+  };
   const data: Record<string, unknown> = {
-    message: payload.message,
+    message: payload.message || (images.length ? " " : payload.message),
     message_type: payload.type,
     visibility: getMessageScopeForType(payload.type),
     ...(payload.zone_id ? { zone_id: payload.zone_id } : {}),
-    ...(broadcastName
-      ? { broadcast_name: broadcastName, msg: { broadcast_name: broadcastName } }
-      : {}),
+    ...(broadcastName ? { broadcast_name: broadcastName } : {}),
+    ...(Object.keys(msg).length ? { msg } : {}),
   };
   if (gid) {
     data.guest_id = gid;

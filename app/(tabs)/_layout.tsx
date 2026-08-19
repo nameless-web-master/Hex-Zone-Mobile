@@ -42,6 +42,13 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
+          name="zones"
+          options={{
+            title: "Zones",
+            tabBarLabel: "Zones",
+          }}
+        />
+        <Tabs.Screen
           name="members"
           options={{
             title: "Members",
@@ -66,6 +73,7 @@ export default function TabsLayout() {
         />
         {/* Reachable from header actions, not shown in the tab pill */}
         <Tabs.Screen name="messages" options={{ href: null }} />
+        <Tabs.Screen name="recent-services" options={{ href: null }} />
         <Tabs.Screen name="settings" options={{ href: null }} />
         <Tabs.Screen name="user-settings" options={{ href: null }} />
         <Tabs.Screen name="emergency-log" options={{ href: null }} />

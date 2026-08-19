@@ -1,11 +1,11 @@
 {
   "expo": {
     "name": "Safe Zone Patrol",
-    "slug": "zone-weaver",
+    "slug": "safe-zone-patrol",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "zoneweaver",
+    "scheme": "safezonepatrol",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.zoneweaver.mobile",
+      "bundleIdentifier": "com.neighbourhoodassistant.safe-zone-patrol",
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification",
@@ -32,7 +32,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
       },
-      "package": "com.zoneweaver.mobile",
+      "package": "com.safezonepatrol.mobile",
       "edgeToEdgeEnabled": true,
       "permissions": [
         "CAMERA",
@@ -87,7 +87,7 @@
       "apiBaseUrl": "https://safe-zone-patrol-server.onrender.com/",
       "webAppBaseUrl": "https://safe-zone-patrol-server.onrender.com/",
       "eas": {
-        "projectId": "8e70e1cf-1392-465c-b756-75c31e97a836"
+        "projectId": "dee01d2e-c0f1-46dc-8a38-08f7736d4a12"
       }
     },
     "owner": "ihnatenkoandrii8s-organization"

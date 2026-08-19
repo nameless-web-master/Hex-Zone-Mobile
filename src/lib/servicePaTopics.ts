@@ -83,6 +83,7 @@ export function validateServicePaCompose(
   type: MessageType,
   fields: ServicePaComposeFields,
   body: string,
+  options?: { allowEmptyBody?: boolean },
 ): string | null {
   if (!isServicePaMessageType(type)) return null;
   if (!fields.subject.trim()) return "Subject is required for PA and SERVICE messages.";
@@ -92,7 +93,7 @@ export function validateServicePaCompose(
       return "Subtopic is required for SERVICE Products messages.";
     }
   }
-  if (!body.trim()) return "Message body is required.";
+  if (!body.trim() && !options?.allowEmptyBody) return "Message body is required.";
   return null;
 }
 

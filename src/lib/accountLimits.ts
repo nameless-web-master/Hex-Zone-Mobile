@@ -138,11 +138,11 @@ export function deviceLimitDescription(type: NormalizedAccountType): string {
     case "PRIVATE_PLUS":
       return "Private+ accounts allow up to 10 smart-home hubs. Phones/browsers are separate login sessions; only one phone/web session can be active at a time.";
     case "EXCLUSIVE":
-      return "Exclusive accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones.";
+      return "Exclusive accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones (the other login device is removed).";
     case "ENHANCED":
-      return "Enhanced accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones.";
+      return "Enhanced accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones (the other login device is removed).";
     case "ENHANCED_PLUS":
-      return "Enhanced+ accounts have no smart-home hub cap. Only one phone/web session can be active at a time.";
+      return "Enhanced+ accounts have no smart-home hub cap. Only one phone/web session can be active at a time; takeover removes the other login device.";
   }
 }
 

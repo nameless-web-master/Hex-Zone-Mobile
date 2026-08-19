@@ -20,6 +20,9 @@ type AppHeaderProps = {
   subtitle?: ReactNode;
   style?: ViewStyle;
   showMessagesButton?: boolean;
+  /** Override the chat-icon action (default: open Home / messages). */
+  onMessagesPress?: () => void;
+  messagesButtonSelected?: boolean;
 };
 
 export function AppHeader({
@@ -27,6 +30,8 @@ export function AppHeader({
   subtitle,
   style,
   showMessagesButton = true,
+  onMessagesPress,
+  messagesButtonSelected = false,
 }: AppHeaderProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -57,11 +62,22 @@ export function AppHeader({
         <AlertBellButton size={42} />
         {showMessagesButton ? (
           <Pressable
-            onPress={() => router.push("/(tabs)/messages" as unknown as Href)}
-            accessibilityLabel="Open messages"
+            onPress={
+              onMessagesPress ??
+              (() =>
+                router.push("/(tabs)/recent-services" as unknown as Href))
+            }
+            accessibilityLabel={
+              onMessagesPress ? "Recent services" : "Open recent services"
+            }
+            accessibilityState={{ selected: messagesButtonSelected }}
             style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
           >
-            <MessageCircle size={21} color={colors.text} strokeWidth={2.2} />
+            <MessageCircle
+              size={21}
+              color={messagesButtonSelected ? colors.accent : colors.text}
+              strokeWidth={2.2}
+            />
           </Pressable>
         ) : null}
         <ProfileAvatarButton

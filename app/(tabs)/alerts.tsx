@@ -16,7 +16,7 @@ import { InboxMessageCard } from "@/components/messages/InboxMessageCard";
 import { useAlarmInbox } from "@/context/AlarmInboxContext";
 import { useAuth } from "@/context/AuthContext";
 import { getMembers } from "@/api/members";
-import { messageBroadcastLabel } from "@/lib/messageBroadcast";
+import { messageAvatarLabel, messageBroadcastLabel } from "@/lib/messageBroadcast";
 import { resolveBroadcastName } from "@/lib/appSettings";
 import { type MessageType } from "@/lib/messageTypes";
 import {
@@ -37,7 +37,10 @@ export default function AlertsScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { isOnline } = useMemberPresence();
-  const selfBroadcastName = resolveBroadcastName(user?.name);
+  const selfRealName =
+    (user?.name ?? "").trim() ||
+    `${user?.first_name ?? ""} ${user?.last_name ?? ""}`.trim();
+  const selfBroadcastName = resolveBroadcastName(selfRealName || user?.name);
   const ownerId = user?.id != null ? Number(user.id) : null;
   const { alarmMessages, loading, error, refresh, markAlarmsSeen } = useAlarmInbox();
   const { zoneNames } = useZoneNameLookup();
@@ -209,24 +212,30 @@ export default function AlertsScreen() {
                 selfBroadcastName,
                 resolveOwnerName: (id) => ownerNames[id] ?? null,
               });
+              const avatarName = messageAvatarLabel(item, {
+                selfOwnerId: ownerId,
+                selfRealName,
+                resolveOwnerName: (id) => ownerNames[id] ?? null,
+              });
               const senderId =
                 typeof item.sender_id === "number" && item.sender_id > 0
                   ? item.sender_id
                   : null;
               const thinAvatar =
                 senderId != null ? `/owners/${senderId}/avatar` : null;
-              const avatarUrl =
-                senderId != null &&
-                ownerId != null &&
-                senderId === ownerId
-                  ? user?.avatar_url ?? ownerAvatars[senderId] ?? thinAvatar
-                  : senderId != null
-                    ? ownerAvatars[senderId] ?? thinAvatar
-                    : null;
+              const isSelf =
+                senderId != null && ownerId != null && senderId === ownerId;
+              const avatarUrl = isSelf
+                ? user?.avatar_url ?? ownerAvatars[senderId] ?? thinAvatar
+                : senderId != null
+                  ? ownerAvatars[senderId] ?? thinAvatar
+                  : null;
               return (
                 <InboxMessageCard
                   item={item}
                   userName={broadcast}
+                  avatarName={avatarName}
+                  avatarEmail={isSelf ? user?.email : null}
                   avatarUrl={avatarUrl}
                   online={senderId != null ? isOnline(senderId) : false}
                   selfOwnerId={ownerId}

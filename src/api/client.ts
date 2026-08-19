@@ -25,6 +25,20 @@ function isAuthFreeRequest(url: string | undefined): boolean {
   return AUTH_FREE_PATHS.some((path) => url.includes(path));
 }
 
+function readRequestBearer(config?: AxiosRequestConfig): string {
+  const headers = config?.headers;
+  if (!headers) return "";
+  const raw =
+    typeof (headers as { get?: (key: string) => unknown }).get === "function"
+      ? (headers as { get: (key: string) => unknown }).get("Authorization") ??
+        (headers as { get: (key: string) => unknown }).get("authorization")
+      : (headers as Record<string, unknown>).Authorization ??
+        (headers as Record<string, unknown>).authorization;
+  return String(raw ?? "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+}
+
 if (__DEV__) {
   console.log(`${LOG_PREFIX} API_BASE_URL =`, API_BASE_URL);
 }
@@ -115,8 +129,14 @@ apiClient.interceptors.response.use(
       );
     }
     if (error.response?.status === 401 && !isAuthFreeRequest(error.config?.url)) {
-      await clearToken();
-      emitUnauthorized();
+      const sent = readRequestBearer(error.config);
+      const current = await getToken();
+      // Ignore unauthenticated or stale in-flight 401s — those must not wipe
+      // a token that was stored after this request left the device.
+      if (sent && current && sent === current) {
+        await clearToken();
+        emitUnauthorized();
+      }
     }
     return Promise.reject(error);
   },

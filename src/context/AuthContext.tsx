@@ -132,6 +132,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ownerZoneId, setOwnerZoneId] = useState<string>("");
   const reauthInProgress = useRef(false);
   const sessionInProgress = useRef(false);
+  const logoutInProgress = useRef(false);
+  const skipNextDeviceSyncRef = useRef(false);
   const { lastMessage, status: wsStatus } = useWebSocket({
     token,
     zoneIds: [],
@@ -140,19 +142,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const performLogout = useCallback(
     async (options?: { clearCredentials?: boolean }) => {
+      if (logoutInProgress.current) return;
+      logoutInProgress.current = true;
       try {
-        await setCurrentDeviceOffline();
-      } catch {
-        /* proceed with local logout */
-      }
-      setUser(null);
-      setTokenState(null);
-      setOwnerZoneId("");
-      await clearToken();
-      await clearLastActivity();
-      if (options?.clearCredentials) {
-        await clearSecureCredentials();
-        await persistRememberMe(false);
+        try {
+          await setCurrentDeviceOffline();
+        } catch {
+          /* proceed with local logout */
+        }
+        setUser(null);
+        setTokenState(null);
+        setOwnerZoneId("");
+        await clearToken();
+        await clearLastActivity();
+        if (options?.clearCredentials) {
+          await clearSecureCredentials();
+          await persistRememberMe(false);
+        }
+      } finally {
+        logoutInProgress.current = false;
       }
     },
     [],
@@ -174,13 +182,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Keep token in storage for API calls during device sync, but do not
         // expose it in React state until sync succeeds — otherwise the root
         // layout navigates away from login before the conflict modal can show.
+        // Also defer remember-me credential writes until sync succeeds so
+        // declining the device prompt leaves no side effects.
         await setToken(result.data.token);
-        await persistRememberMe(remember);
-        if (remember) {
-          await setSecureCredentials(email, password);
-        } else {
-          await clearSecureCredentials();
-        }
 
         const loginUser = result.data.user;
         const loginHasEmail =
@@ -223,6 +227,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error(message);
         }
 
+        await persistRememberMe(remember);
+        if (remember) {
+          await setSecureCredentials(email, password);
+        } else {
+          await clearSecureCredentials();
+        }
+
+        // Login already synced the device; skip the mount effect once.
+        skipNextDeviceSyncRef.current = true;
         setTokenState(result.data.token);
         setUser(normalized);
         await touchLastActivity();
@@ -313,6 +326,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!token || !user) return;
+    if (skipNextDeviceSyncRef.current) {
+      skipNextDeviceSyncRef.current = false;
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const result = await syncCurrentDevice(user, { platformLabel: "Mobile" });
@@ -355,7 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onSocketFrame = async () => {
-      if (!lastMessage) return;
+      if (!lastMessage || wsStatus !== "open") return;
       const evt = parseSessionRevokedSocketEvent(lastMessage);
       if (!evt) return;
       const localHid = (await getOrCreateDeviceHid()).toUpperCase();
@@ -371,7 +388,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user, lastMessage, performLogout]);
+  }, [token, user, lastMessage, performLogout, wsStatus]);
 
   useEffect(() => {
     if (!token || !user?.id) return;
@@ -476,7 +493,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return onUnauthorized(() => {
       void (async () => {
-        if (sessionInProgress.current || reauthInProgress.current) return;
+        if (
+          sessionInProgress.current ||
+          reauthInProgress.current ||
+          logoutInProgress.current
+        ) {
+          return;
+        }
         if (await isSessionInactive()) {
           await performLogout({ clearCredentials: true });
           return;
