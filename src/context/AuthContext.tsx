@@ -332,7 +332,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     void (async () => {
-      const result = await syncCurrentDevice(user, { platformLabel: "Mobile" });
+      const result = await syncCurrentDevice(user, {
+        platformLabel: "Mobile",
+        resumeSession: true,
+      });
       if (cancelled) return;
       // Only a real multi-device conflict should end the session. Network /
       // sync errors must not wipe a still-valid login after app reopen.
@@ -353,7 +356,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user, performLogout]);
+    // Re-run only when the signed-in identity changes — not when avatar /
+    // profile fields update (that was logging people out after photo upload).
+  }, [token, user?.id, performLogout]);
 
   // Sign out this phone when another device takes over the account session.
   // Prefer SESSION_REVOKED over the socket; HTTP poll only while WS is down.

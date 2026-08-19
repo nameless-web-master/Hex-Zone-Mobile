@@ -9,7 +9,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, type Href } from "expo-router";
-import { LogOut, MessageCircle, Settings, UserRound } from "lucide-react-native";
+import { LogOut, MessageCircle, Siren, Settings, UserRound } from "lucide-react-native";
+import { useCompose } from "@/context/ComposeContext";
 import { AlertBellButton } from "@/components/ui/AlertBellButton";
 import { ProfileAvatarButton } from "@/components/ui/ProfileAvatarButton";
 import { useAuth } from "@/context/AuthContext";
@@ -20,7 +21,6 @@ type AppHeaderProps = {
   subtitle?: ReactNode;
   style?: ViewStyle;
   showMessagesButton?: boolean;
-  /** Override the chat-icon action (default: open Home / messages). */
   onMessagesPress?: () => void;
   messagesButtonSelected?: boolean;
 };
@@ -36,6 +36,7 @@ export function AppHeader({
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
+  const { openQuickAlerts } = useCompose();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const displayName = (user?.name ?? "").trim() || "Account";
@@ -59,6 +60,13 @@ export function AppHeader({
       </View>
 
       <View style={styles.actions}>
+        <Pressable
+          onPress={openQuickAlerts}
+          accessibilityLabel="Quick alerts"
+          style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+        >
+          <Siren size={22} color={colors.accent} strokeWidth={2.2} />
+        </Pressable>
         <AlertBellButton size={42} />
         {showMessagesButton ? (
           <Pressable

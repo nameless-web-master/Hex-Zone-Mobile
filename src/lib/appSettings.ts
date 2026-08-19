@@ -18,10 +18,7 @@ export const QUICK_MESSAGE_TYPES = [
   "SENSOR",
   "NS_PANIC",
   "UNKNOWN",
-  "PA",
-  "SERVICE",
   "WELLNESS_CHECK",
-  "PRIVATE",
 ] as const;
 
 export type QuickMessageType = (typeof QUICK_MESSAGE_TYPES)[number];
@@ -47,10 +44,7 @@ export const QUICK_MESSAGE_LABELS: Record<QuickMessageType, string> = {
   SENSOR: "Sensor alert",
   NS_PANIC: "Non-specific (anti-retaliation) alert",
   UNKNOWN: "Unknown alert",
-  PA: "Public announcement",
-  SERVICE: "Service request",
   WELLNESS_CHECK: "Wellness check",
-  PRIVATE: "Private message",
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -69,10 +63,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     NS_PANIC:
       "Non-specific alert: suspicious activity reported in the area. Sender identity withheld (anti-retaliation).",
     UNKNOWN: "Unknown alert reported in the zone.",
-    PA: "Public announcement for the neighbourhood.",
-    SERVICE: "Service request submitted.",
     WELLNESS_CHECK: "Wellness check: please confirm you are safe and well.",
-    PRIVATE: "",
   },
 };
 
@@ -112,7 +103,15 @@ function mergeSettings(raw: unknown): AppSettings {
     },
     quickMessages: {
       ...DEFAULT_APP_SETTINGS.quickMessages,
-      ...(row.quickMessages ?? {}),
+      ...Object.fromEntries(
+        QUICK_MESSAGE_TYPES.map((type) => [
+          type,
+          typeof (row.quickMessages as Record<string, unknown> | undefined)?.[type] ===
+          "string"
+            ? String((row.quickMessages as Record<string, unknown>)[type])
+            : DEFAULT_APP_SETTINGS.quickMessages[type],
+        ]),
+      ),
     },
   };
 }

@@ -15,8 +15,17 @@ function readImagesArray(source: unknown): string[] {
   if (!Array.isArray(source)) return [];
   const urls: string[] = [];
   for (const item of source) {
-    if (isMessageImageUrl(item) && urls.length < MAX_MESSAGE_IMAGES) {
-      urls.push(item.trim());
+    let candidate: unknown = item;
+    if (
+      item != null &&
+      typeof item === "object" &&
+      !Array.isArray(item) &&
+      typeof (item as { url?: unknown }).url === "string"
+    ) {
+      candidate = (item as { url: string }).url;
+    }
+    if (isMessageImageUrl(candidate) && urls.length < MAX_MESSAGE_IMAGES) {
+      urls.push(candidate.trim());
     }
   }
   return urls;

@@ -180,7 +180,7 @@ export function DateRangeFilterChip({
                   dateTo.trim() ? new Date(dateTo + "T23:59:59") : undefined
                 }
               />
-              <Text
+              {/* <Text
                 style={{
                   color: colors.textMuted,
                   fontSize: 12,
@@ -188,7 +188,7 @@ export function DateRangeFilterChip({
                 }}
               >
                 to
-              </Text>
+              </Text> */}
               <DateField
                 value={dateTo}
                 onChange={onDateToChange}

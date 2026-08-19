@@ -156,7 +156,12 @@ export async function removeDevice(deviceId: number | string): Promise<void> {
 
 export async function syncCurrentDevice(
   user: AuthUser | null,
-  options?: { platformLabel?: string; forceTakeover?: boolean },
+  options?: {
+    platformLabel?: string;
+    forceTakeover?: boolean;
+    /** Already signed in — heartbeat only; do not treat other devices as a logout. */
+    resumeSession?: boolean;
+  },
 ): Promise<DeviceSyncResult> {
   if (!user) return { status: "ok" };
   const platformLabel = options?.platformLabel ?? "Mobile";
@@ -183,7 +188,7 @@ export async function syncCurrentDevice(
       (d) => String(d.hid).toUpperCase() === localHid.toUpperCase(),
     );
     if (byLocalHid?.id != null) {
-      if (!options?.forceTakeover) {
+      if (!options?.forceTakeover && !options?.resumeSession) {
         const otherOnline = mine.filter(
           (d) =>
             String(d.hid).toUpperCase() !== localHid.toUpperCase() &&
