@@ -1,8 +1,8 @@
 import { Pressable, Text, View } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { useRouter, type Href } from "expo-router";
 import { Home, Map, Plus, QrCode, UserPlus, Users } from "lucide-react-native";
 import { useAuth } from "@/context/AuthContext";
+import { useCompose } from "@/context/ComposeContext";
 import { useBottomSafeInset } from "@/hooks/useBottomSafeInset";
 import { colors } from "@/theme/colors";
 
@@ -36,8 +36,8 @@ export function FloatingTabBar({
   navigation,
 }: BottomTabBarProps) {
   const bottomInset = useBottomSafeInset();
-  const router = useRouter();
   const { user } = useAuth();
+  const { openCompose } = useCompose();
 
   const visibleRoutes = state.routes.filter((route) => {
     const options = descriptors[route.key].options as TabOptionsWithHref;
@@ -47,16 +47,6 @@ export function FloatingTabBar({
     if (itemStyle?.display === "none") return false;
     return true;
   });
-
-  const openNewMessage = () => {
-    router.push({
-      pathname: "/(tabs)",
-      params: {
-        compose: "1",
-        n: String(Date.now()),
-      },
-    } as unknown as Href);
-  };
 
   return (
     <View
@@ -161,7 +151,7 @@ export function FloatingTabBar({
       {/* Same baseline, pinned to the right */}
       {user ? (
         <Pressable
-          onPress={openNewMessage}
+          onPress={openCompose}
           accessibilityRole="button"
           accessibilityLabel="New message"
           style={{

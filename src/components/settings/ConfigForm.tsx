@@ -249,7 +249,7 @@ export function ConfigForm() {
       <SectionTitle>Quick alert messages</SectionTitle>
       <Card style={{ gap: 14 }}>
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          Pre-programmed text sent when a quick button is pressed. Leave blank to
+          Pre-programmed text sent when a Quick Alert button is pressed. Leave blank to
           compose manually.
         </Text>
         {QUICK_MESSAGE_TYPES.map((type) => (
