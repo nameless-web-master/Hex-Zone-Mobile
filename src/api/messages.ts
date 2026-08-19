@@ -15,6 +15,7 @@ import {
   extractServicePaFields,
   formatTopicPath,
 } from "@/lib/servicePaTopics";
+import { extractMessageImages } from "@/lib/messageImages";
 
 export type MessageVisibility = MessageScope;
 
@@ -32,6 +33,9 @@ export type Message = {
   visibility: MessageVisibility;
   message: string;
   created_at: string;
+  /** Sender coordinates when provided by the server or geo-propagation metadata. */
+  latitude?: number | null;
+  longitude?: number | null;
   raw_payload: Record<string, unknown> | null;
   guest_sender_id?: string;
   guest_id?: string | null;
@@ -42,6 +46,11 @@ export type Message = {
   topic?: string | null;
   subtopic?: string | null;
   topic_label?: string | null;
+  relevant_zone_network_id?: string | null;
+  relevant_zone_name?: string | null;
+  relevant_zone_label?: string | null;
+  /** Up to 5 image URLs (https or data:) attached to the message. */
+  images?: string[];
 };
 
 export type ListMessagesParams = {
@@ -59,6 +68,7 @@ export type SendMessagePayload = {
   guest_id?: string;
   /** Sender's broadcast name, embedded so receivers can show a friendly identity. */
   broadcast_name?: string;
+  images?: string[];
 };
 
 function toLegacyTypeFromVisibility(visibility: unknown): MessageType | null {
@@ -98,6 +108,47 @@ function coerceMessageScope(value: unknown): MessageScope | null {
   if (typeof value !== "string") return null;
   const key = value.trim().toLowerCase();
   if (key === "public" || key === "private") return key;
+  return null;
+}
+
+function readCoordinate(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function extractMessagePosition(
+  ...sources: Array<Record<string, unknown> | null | undefined>
+): { latitude: number; longitude: number } | null {
+  for (const source of sources) {
+    if (!source) continue;
+    const lat = readCoordinate(source.latitude ?? source.lat);
+    const lng = readCoordinate(source.longitude ?? source.lng ?? source.lon);
+    if (lat != null && lng != null) {
+      return { latitude: lat, longitude: lng };
+    }
+    const position = source.position;
+    if (position && typeof position === "object" && !Array.isArray(position)) {
+      const nested = position as Record<string, unknown>;
+      const nestedLat = readCoordinate(nested.latitude ?? nested.lat);
+      const nestedLng = readCoordinate(nested.longitude ?? nested.lng ?? nested.lon);
+      if (nestedLat != null && nestedLng != null) {
+        return { latitude: nestedLat, longitude: nestedLng };
+      }
+    }
+    const origin = source.origin;
+    if (origin && typeof origin === "object" && !Array.isArray(origin)) {
+      const nested = origin as Record<string, unknown>;
+      const nestedLat = readCoordinate(nested.latitude ?? nested.lat);
+      const nestedLng = readCoordinate(nested.longitude ?? nested.lng ?? nested.lon);
+      if (nestedLat != null && nestedLng != null) {
+        return { latitude: nestedLat, longitude: nestedLng };
+      }
+    }
+  }
   return null;
 }
 
@@ -316,8 +367,10 @@ export function normalizeMessage(raw: unknown): Message | null {
     textValue = servicePaFields.description?.trim() ?? "";
   }
 
+  const images = extractMessageImages(row, msgRecord, rowStructuredPayload);
+
   const allowSyntheticBody = type === "PERMISSION" || type === "CHAT";
-  if (textValue.length === 0 && allowSyntheticBody && msgRecord) {
+  if (textValue.length === 0 && allowSyntheticBody && msgRecord && images.length === 0) {
     textValue = permissionBodyFallback(msgRecord).trim();
   }
   if (textValue.length === 0 && type === "PERMISSION") {
@@ -326,7 +379,7 @@ export function normalizeMessage(raw: unknown): Message | null {
   if (textValue.length === 0 && type === "PERMISSION") {
     textValue = "(Permission traffic)";
   }
-  if (textValue.length === 0 && type === "CHAT") {
+  if (textValue.length === 0 && type === "CHAT" && images.length === 0) {
     textValue = "(Chat)";
   }
   if (
@@ -362,7 +415,7 @@ export function normalizeMessage(raw: unknown): Message | null {
     zoneId.trim().length === 0 ||
     resolvedSenderId == null ||
     typeof createdAt !== "string" ||
-    textValue.trim().length === 0
+    (textValue.trim().length === 0 && images.length === 0)
   ) {
     return null;
   }
@@ -403,6 +456,15 @@ export function normalizeMessage(raw: unknown): Message | null {
     : null;
   const is_read_by_viewer =
     typeof row.is_read_by_viewer === "boolean" ? row.is_read_by_viewer : undefined;
+  const relevantZoneNetworkId =
+    typeof row.relevant_zone_network_id === "string"
+      ? row.relevant_zone_network_id
+      : null;
+  const relevantZoneName =
+    typeof row.relevant_zone_name === "string" ? row.relevant_zone_name : null;
+  const relevantZoneLabel =
+    typeof row.relevant_zone_label === "string" ? row.relevant_zone_label : null;
+  const coordinates = extractMessagePosition(row, msgRecord, rowStructuredPayload, raw_payload);
 
   return {
     id: String(id),
@@ -415,6 +477,9 @@ export function normalizeMessage(raw: unknown): Message | null {
     visibility: scope,
     message: textValue,
     created_at: createdAt,
+    ...(coordinates
+      ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
+      : {}),
     raw_payload,
     ...(useGuestLogicalSender && guestSenderIdRaw
       ? { guest_sender_id: guestSenderIdRaw }
@@ -428,11 +493,15 @@ export function normalizeMessage(raw: unknown): Message | null {
     ...(resolvedSubject ? { subject: resolvedSubject } : {}),
     ...(resolvedTopic ? { topic: resolvedTopic } : {}),
     ...(resolvedSubtopic ? { subtopic: resolvedSubtopic } : {}),
-    ...(resolvedTopic
+    ...(type === "SERVICE" && resolvedTopic
       ? {
           topic_label: formatTopicPath(resolvedTopic, resolvedSubtopic),
         }
       : {}),
+    ...(relevantZoneNetworkId ? { relevant_zone_network_id: relevantZoneNetworkId } : {}),
+    ...(relevantZoneName ? { relevant_zone_name: relevantZoneName } : {}),
+    ...(relevantZoneLabel ? { relevant_zone_label: relevantZoneLabel } : {}),
+    ...(images.length ? { images } : {}),
   };
 }
 
@@ -490,10 +559,15 @@ export function messageFromGeoPropagation(
   const type = toMessageType(propagation.type) ?? "UNKNOWN";
   const bodyFromMeta = metadataMsg ?? null;
   const servicePa = extractServicePaFields(bodyFromMeta);
+  const images = extractMessageImages(
+    propagation as unknown as Record<string, unknown>,
+    bodyFromMeta,
+    meta,
+  );
   const text =
     servicePa.description?.trim() ||
     (typeof propagation.text === "string" && propagation.text.trim()) ||
-    String(propagation.type ?? "ALARM");
+    (images.length ? "" : String(propagation.type ?? "ALARM"));
   const createdAt = propagation.created_at;
   const id = propagation.id;
   const receiverFromMeta = meta?.receiver_owner_id ?? meta?.receiver_id;
@@ -506,6 +580,10 @@ export function messageFromGeoPropagation(
   if (id == null || !zoneId || typeof createdAt !== "string") {
     return null;
   }
+  const coordinates = extractMessagePosition(
+    propagation as unknown as Record<string, unknown>,
+    meta,
+  );
   return normalizeMessage({
     id,
     zone_id: zoneId,
@@ -521,6 +599,9 @@ export function messageFromGeoPropagation(
     ...(servicePa.subject ? { subject: servicePa.subject } : {}),
     ...(servicePa.topic ? { topic: servicePa.topic } : {}),
     ...(servicePa.subtopic ? { subtopic: servicePa.subtopic } : {}),
+    ...(coordinates
+      ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
+      : {}),
     raw_payload: propagation.metadata ?? null,
   });
 }
@@ -546,14 +627,20 @@ export async function listMessages(params: ListMessagesParams) {
 export async function sendMessage(payload: SendMessagePayload) {
   const gid = payload.guest_id?.trim();
   const broadcastName = payload.broadcast_name?.trim();
+  const images = Array.isArray(payload.images)
+    ? payload.images.filter((url) => typeof url === "string" && url.trim()).slice(0, 5)
+    : [];
+  const msg: Record<string, unknown> = {
+    ...(broadcastName ? { broadcast_name: broadcastName } : {}),
+    ...(images.length ? { images } : {}),
+  };
   const data: Record<string, unknown> = {
-    message: payload.message,
+    message: payload.message || (images.length ? " " : payload.message),
     message_type: payload.type,
     visibility: getMessageScopeForType(payload.type),
     ...(payload.zone_id ? { zone_id: payload.zone_id } : {}),
-    ...(broadcastName
-      ? { broadcast_name: broadcastName, msg: { broadcast_name: broadcastName } }
-      : {}),
+    ...(broadcastName ? { broadcast_name: broadcastName } : {}),
+    ...(Object.keys(msg).length ? { msg } : {}),
   };
   if (gid) {
     data.guest_id = gid;

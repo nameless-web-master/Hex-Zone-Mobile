@@ -3,8 +3,7 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CalendarRange, ChevronRight, Ticket } from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
-import { ScreenHeader } from "@/components/ui/ScreenHeader";
-import { AlertBellButton } from "@/components/ui/AlertBellButton";
+import { AppHeader } from "@/components/ui/AppHeader";
 import { Card } from "@/components/ui/Card";
 import { useEffectiveZoneId } from "@/hooks/useEffectiveZoneId";
 import { colors } from "@/theme/colors";
@@ -42,11 +41,10 @@ export default function GuestHubScreen() {
   return (
     <GradientBackground>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-          <ScreenHeader
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 }}>
+          <AppHeader
             title="Guest"
             subtitle="Manage your expected visitors"
-            right={<AlertBellButton />}
           />
 
           {!zoneId ? (

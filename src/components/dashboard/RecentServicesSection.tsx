@@ -33,9 +33,11 @@ function serviceMeta(row: Message): string {
 
 type Props = {
   zoneId?: string;
+  /** Full-page list (no collapsible card chrome). */
+  variant?: "card" | "page";
 };
 
-export function RecentServicesSection({ zoneId }: Props) {
+export function RecentServicesSection({ zoneId, variant = "card" }: Props) {
   const router = useRouter();
   const { services, loading, error, refresh, zoneId: resolvedZoneId } =
     useRecentServices(zoneId);
@@ -46,63 +48,36 @@ export function RecentServicesSection({ zoneId }: Props) {
     setExpanded(false);
   }, [resolvedZoneId]);
 
-  if (!resolvedZoneId) return null;
+  if (!resolvedZoneId) {
+    if (variant === "page") {
+      return (
+        <Text style={{ color: colors.textMuted, fontSize: 14, lineHeight: 20 }}>
+          No zone is attached to this account yet, so there are no service
+          broadcasts to show.
+        </Text>
+      );
+    }
+    return null;
+  }
 
-  const canToggle = services.length > COLLAPSED_COUNT;
-  const visibleRows = expanded ? services : services.slice(0, COLLAPSED_COUNT);
+  const canToggle = variant === "card" && services.length > COLLAPSED_COUNT;
+  const visibleRows =
+    variant === "page" || expanded
+      ? services
+      : services.slice(0, COLLAPSED_COUNT);
   const hiddenCount = services.length - visibleRows.length;
 
   const openMessages = (messageId?: string) => {
     const query = messageId
       ? `?type=SERVICE&message=${encodeURIComponent(messageId)}`
       : "?type=SERVICE";
-    router.push(`/(tabs)/messages${query}` as Href);
+    router.push(`/(tabs)${query}` as Href);
   };
 
-  return (
-    <View
-      style={{
-        borderRadius: 16,
-        backgroundColor: "rgba(255,255,255,0.95)",
-        borderWidth: 1,
-        borderColor: colors.border,
-        overflow: "hidden",
-      }}
-    >
-      <Pressable
-        onPress={() => setSectionOpen((v) => !v)}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          backgroundColor: "rgba(251,239,216,0.65)",
-          borderBottomWidth: sectionOpen ? 1 : 0,
-          borderBottomColor: colors.border,
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
-          <Wrench size={16} color={colors.warning} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>
-              Recent services
-            </Text>
-            <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>
-              Latest SERVICE broadcasts for your zone
-            </Text>
-          </View>
-        </View>
-        {sectionOpen ? (
-          <ChevronUp size={16} color={colors.textMuted} />
-        ) : (
-          <ChevronDown size={16} color={colors.textMuted} />
-        )}
-      </Pressable>
-
-      {sectionOpen ? (
-        <View style={{ padding: 12, gap: 10 }}>
+  const list = (
+        <View style={{ padding: variant === "page" ? 0 : 12, gap: 10 }}>
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+            {variant === "card" ? (
             <Pressable
               onPress={() => openMessages()}
               style={{
@@ -118,6 +93,7 @@ export function RecentServicesSection({ zoneId }: Props) {
                 View all
               </Text>
             </Pressable>
+            ) : null}
             <Pressable
               onPress={() => void refresh()}
               disabled={loading}
@@ -150,7 +126,7 @@ export function RecentServicesSection({ zoneId }: Props) {
 
           {!loading && services.length === 0 ? (
             <Text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 18 }}>
-              No service messages yet. Publish from Messages → SERVICES.
+              No service messages yet. Publish from Home → SERVICES.
             </Text>
           ) : null}
 
@@ -220,7 +196,51 @@ export function RecentServicesSection({ zoneId }: Props) {
             </Pressable>
           ) : null}
         </View>
-      ) : null}
+  );
+
+  if (variant === "page") return list;
+
+  return (
+    <View
+      style={{
+        borderRadius: 16,
+        backgroundColor: "rgba(255,255,255,0.95)",
+        borderWidth: 1,
+        borderColor: colors.border,
+        overflow: "hidden",
+      }}
+    >
+      <Pressable
+        onPress={() => setSectionOpen((v) => !v)}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          backgroundColor: "rgba(251,239,216,0.65)",
+          borderBottomWidth: sectionOpen ? 1 : 0,
+          borderBottomColor: colors.border,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+          <Wrench size={16} color={colors.warning} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>
+              Recent services
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>
+              Latest SERVICE broadcasts for your zone
+            </Text>
+          </View>
+        </View>
+        {sectionOpen ? (
+          <ChevronUp size={16} color={colors.textMuted} />
+        ) : (
+          <ChevronDown size={16} color={colors.textMuted} />
+        )}
+      </Pressable>
+      {sectionOpen ? list : null}
     </View>
   );
 }

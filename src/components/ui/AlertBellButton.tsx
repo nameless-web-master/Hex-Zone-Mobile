@@ -1,10 +1,14 @@
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { Bell } from "lucide-react-native";
 import { useAlarmInbox } from "@/context/AlarmInboxContext";
 import { colors } from "@/theme/colors";
 
-export function AlertBellButton() {
+type AlertBellButtonProps = {
+  size?: number;
+};
+
+export function AlertBellButton({ size = 42 }: AlertBellButtonProps) {
   const router = useRouter();
   const { unreadAlarmCount, markAlarmsSeen } = useAlarmInbox();
 
@@ -14,39 +18,49 @@ export function AlertBellButton() {
         void markAlarmsSeen();
         router.push("/(tabs)/alerts" as unknown as Href);
       }}
-      style={{
-        width: 42,
-        height: 42,
-        borderRadius: 21,
-        backgroundColor: colors.bgCard,
-        borderWidth: 1,
-        borderColor: colors.border,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
       accessibilityLabel="Open incoming alarms"
+      style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
     >
-      <Bell size={20} color={colors.accent} />
-      {unreadAlarmCount > 0 ? (
-        <View
-          style={{
-            position: "absolute",
-            top: -2,
-            right: -2,
-            minWidth: 18,
-            height: 18,
-            borderRadius: 9,
-            backgroundColor: colors.danger,
-            alignItems: "center",
-            justifyContent: "center",
-            paddingHorizontal: 4,
-          }}
-        >
-          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>
-            {unreadAlarmCount > 99 ? "99+" : unreadAlarmCount}
-          </Text>
-        </View>
-      ) : null}
+      <View
+        style={[
+          styles.circle,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderColor: "transparent",
+            backgroundColor: "transparent",
+          },
+        ]}
+      >
+        <Bell
+          size={Math.round(size * 0.5)}
+          color={colors.text}
+          strokeWidth={2.2}
+        />
+        {unreadAlarmCount > 0 ? <View style={styles.dot} /> : null}
+      </View>
     </Pressable>
   );
 }
+
+const styles = StyleSheet.create({
+  circle: {
+    backgroundColor: "#E8F0FA",
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dot: {
+    position: "absolute",
+    top: 7,
+    right: 8,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: colors.danger,
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
+  },
+});

@@ -72,10 +72,145 @@ export function parseInboxSocketRefetchSignal(raw: string): boolean {
       t === "PERMISSION_MESSAGE" ||
       t === "NEW_GEO_MESSAGE" ||
       t === "unexpected_guest" ||
-      t === "guest_is_here"
+      t === "guest_is_here" ||
+      t === "BLOCKS_CHANGED" ||
+      t === "GUEST_REQUEST_CHANGED"
     );
   } catch {
     return false;
+  }
+}
+
+export type BlocksChangedSocketEvent = {
+  action: "created" | "deleted" | string;
+  block?: Record<string, unknown>;
+  block_id?: number;
+};
+
+export function parseBlocksChangedSocketEvent(
+  raw: string,
+): BlocksChangedSocketEvent | null {
+  try {
+    const parsed = JSON.parse(raw) as { type?: unknown; data?: unknown };
+    if (parsed.type !== "BLOCKS_CHANGED") return null;
+    const data =
+      parsed.data != null && typeof parsed.data === "object" && !Array.isArray(parsed.data)
+        ? (parsed.data as Record<string, unknown>)
+        : null;
+    if (!data) return null;
+    const action = typeof data.action === "string" ? data.action : "changed";
+    const block_id =
+      typeof data.block_id === "number"
+        ? data.block_id
+        : typeof data.blockId === "number"
+          ? data.blockId
+          : undefined;
+    const block =
+      data.block != null && typeof data.block === "object" && !Array.isArray(data.block)
+        ? (data.block as Record<string, unknown>)
+        : undefined;
+    return { action, block, block_id };
+  } catch {
+    return null;
+  }
+}
+
+export type GuestRequestChangedSocketEvent = {
+  guest_id?: string;
+  zone_id?: string;
+  status?: string;
+  request_id?: string;
+};
+
+export function parseGuestRequestChangedSocketEvent(
+  raw: string,
+): GuestRequestChangedSocketEvent | null {
+  try {
+    const parsed = JSON.parse(raw) as { type?: unknown; data?: unknown };
+    if (parsed.type !== "GUEST_REQUEST_CHANGED") return null;
+    const data =
+      parsed.data != null && typeof parsed.data === "object" && !Array.isArray(parsed.data)
+        ? (parsed.data as Record<string, unknown>)
+        : {};
+    return {
+      guest_id: typeof data.guest_id === "string" ? data.guest_id : undefined,
+      zone_id: typeof data.zone_id === "string" ? data.zone_id : undefined,
+      status: typeof data.status === "string" ? data.status : undefined,
+      request_id:
+        typeof data.request_id === "string"
+          ? data.request_id
+          : data.request_id != null
+            ? String(data.request_id)
+            : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type SessionRevokedSocketEvent = {
+  kept_hid?: string | null;
+  released_hids: string[];
+  reason?: string;
+};
+
+export function parseSessionRevokedSocketEvent(
+  raw: string,
+): SessionRevokedSocketEvent | null {
+  try {
+    const parsed = JSON.parse(raw) as { type?: unknown; data?: unknown };
+    if (parsed.type !== "SESSION_REVOKED") return null;
+    const data =
+      parsed.data != null && typeof parsed.data === "object" && !Array.isArray(parsed.data)
+        ? (parsed.data as Record<string, unknown>)
+        : {};
+    const releasedRaw = data.released_hids;
+    const released_hids = Array.isArray(releasedRaw)
+      ? releasedRaw
+          .map((h) => (typeof h === "string" ? h.trim().toUpperCase() : ""))
+          .filter(Boolean)
+      : [];
+    return {
+      kept_hid:
+        typeof data.kept_hid === "string" ? data.kept_hid.trim().toUpperCase() : null,
+      released_hids,
+      reason: typeof data.reason === "string" ? data.reason : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type MemberPresenceSocketEvent = {
+  ownerId: number;
+  online: boolean;
+};
+
+/** Parse MEMBER_PRESENCE frames used for realtime online/offline dots. */
+export function parseMemberPresenceSocketEvent(
+  raw: string,
+): MemberPresenceSocketEvent | null {
+  try {
+    const parsed = JSON.parse(raw) as { type?: unknown; data?: unknown };
+    if (parsed.type !== "MEMBER_PRESENCE") return null;
+    const data =
+      parsed.data != null &&
+      typeof parsed.data === "object" &&
+      !Array.isArray(parsed.data)
+        ? (parsed.data as Record<string, unknown>)
+        : {};
+    const rawId = data.owner_id ?? data.ownerId;
+    const ownerId =
+      typeof rawId === "number"
+        ? rawId
+        : typeof rawId === "string" && rawId.trim()
+          ? Number(rawId)
+          : NaN;
+    if (!Number.isFinite(ownerId) || ownerId <= 0) return null;
+    if (typeof data.online !== "boolean") return null;
+    return { ownerId, online: data.online };
+  } catch {
+    return null;
   }
 }
 

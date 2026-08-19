@@ -17,6 +17,22 @@ export type MessageWorkflowMeta = {
   confirmBeforeSend: boolean;
 };
 
+export const PRIVATE_PLUS_NETWORK_SHARED_MESSAGE_TYPES = [
+  "PANIC",
+  "NS_PANIC",
+  "PA",
+  "SERVICE",
+] as const;
+
+export type PrivatePlusNetworkSharedMessageType =
+  (typeof PRIVATE_PLUS_NETWORK_SHARED_MESSAGE_TYPES)[number];
+
+export function isPrivatePlusNetworkSharedMessageType(
+  type: MessageType,
+): type is PrivatePlusNetworkSharedMessageType {
+  return (PRIVATE_PLUS_NETWORK_SHARED_MESSAGE_TYPES as readonly string[]).includes(type);
+}
+
 export const MESSAGE_WORKFLOW: Record<
   | "SENSOR"
   | "PANIC"
@@ -43,7 +59,7 @@ export const MESSAGE_WORKFLOW: Record<
   PANIC: {
     priority: "MAX",
     description:
-      "Emergency distress alarm using your current device location. Inside the admin primary zone, all invited members and the administrator are notified; outside the primary zone, no one receives it.",
+      "Emergency distress alarm using your current device location. Inside the admin primary zone, all invited members and the administrator are notified; outside the primary zone, no one receives it. On Private+ (family) accounts, PANIC is always shared with every network member and the administrator.",
     delivery: "Instant push + WebSocket to matched network members.",
     locationSource: "live_gps",
     requiresAdmin: false,
@@ -55,7 +71,7 @@ export const MESSAGE_WORKFLOW: Record<
   NS_PANIC: {
     priority: "MAX",
     description:
-      "Non-silent emergency alarm with distinct urgency. Same primary-zone routing as PANIC using your current device location.",
+      "Non-silent emergency alarm with distinct urgency. Same primary-zone routing as PANIC using your current device location. On Private+ accounts, NS PANIC is network-shared like PANIC.",
     delivery: "Instant push + WebSocket to matched network members.",
     locationSource: "live_gps",
     requiresAdmin: false,
@@ -91,7 +107,7 @@ export const MESSAGE_WORKFLOW: Record<
   PA: {
     priority: "MEDIUM",
     description:
-      "Public announcement using your current device location. Inside the admin primary zone, all invited members and the administrator receive it.",
+      "Public announcement using your current device location. Inside the admin primary zone, all invited members and the administrator receive it. On Private+ accounts, PA is always shared with every network member and the administrator.",
     delivery: "WebSocket + optional push.",
     locationSource: "live_gps",
     requiresAdmin: false,
@@ -103,7 +119,7 @@ export const MESSAGE_WORKFLOW: Record<
   SERVICE: {
     priority: "LOW",
     description:
-      "Service listing or maintenance alert using your current device location. Routing follows primary vs secondary zone rules for your network.",
+      "Service listing or maintenance alert using your current device location. Routing follows primary vs secondary zone rules for your network. On Private+ accounts, SERVICE is always shared with every network member and the administrator.",
     delivery: "WebSocket; push optional.",
     locationSource: "live_gps",
     requiresAdmin: false,
@@ -115,8 +131,8 @@ export const MESSAGE_WORKFLOW: Record<
   WELLNESS_CHECK: {
     priority: "HIGH",
     description:
-      "Safety check alarm sent from your registered home address. Recipients can acknowledge they are OK. Routing follows primary vs secondary zone rules.",
-    delivery: "WebSocket + push; acknowledgements tracked.",
+      "Safety check alarm sent from your registered home address. Recipients can acknowledge they are OK when the check is sent from a smart-home device (not the mobile app). Routing follows primary vs secondary zone rules.",
+    delivery: "WebSocket + push; acknowledgements tracked for smart-home senders.",
     locationSource: "registered_address",
     requiresAdmin: false,
     requiresRecipient: false,
@@ -140,6 +156,45 @@ export function isEmergencyMessageType(type: MessageType): boolean {
 export function isUnknownMessageType(type: MessageType): boolean {
   return type === "UNKNOWN";
 }
+
+/** UNKNOWN quick-alert must be held this long before sending (Android/mobile). */
+export const UNKNOWN_HOLD_MS = 5000;
+
+export function isServiceMessageType(type: MessageType): boolean {
+  return type === "SERVICE";
+}
+
+/** True when recipients may respond to a wellness check (smart-home sender only). */
+export function wellnessResponseTrackingEnabled(message: {
+  type: MessageType;
+  raw_payload?: Record<string, unknown> | null;
+}): boolean {
+  if (message.type !== "WELLNESS_CHECK") return false;
+  const payload = message.raw_payload;
+  if (!payload || typeof payload !== "object") return false;
+  if (payload.response_tracking_enabled === true) return true;
+  if (payload.response_tracking_enabled === false) return false;
+  const hid =
+    typeof payload.hid === "string" ? payload.hid.trim().toUpperCase() : "";
+  return Boolean(hid) && !hid.startsWith("MOB-") && !hid.startsWith("WEB-");
+}
+
+/** Inbox / list emphasis colors (mirrors UNKNOWN red styling for SERVICE green). */
+export const UNKNOWN_MESSAGE_UI = {
+  border: "#B71C1C",
+  surface: "#FFEBEE",
+  badge: "#C62828",
+  title: "#B71C1C",
+  body: "#7A1622",
+} as const;
+
+export const SERVICE_MESSAGE_UI = {
+  border: "#2E7D32",
+  surface: "#E8F5E9",
+  badge: "#2E7D32",
+  title: "#1B5E20",
+  body: "#33691E",
+} as const;
 
 export function requiresAdminToSendType(type: MessageType): boolean {
   return getMessageWorkflow(type)?.requiresAdmin ?? false;

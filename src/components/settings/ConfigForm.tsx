@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Text, TextInput, View } from "react-native";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { AddressAutocompleteInput } from "@/components/ui/AddressAutocompleteInput";
 import {
   QUICK_MESSAGE_LABELS,
   QUICK_MESSAGE_TYPES,
@@ -90,7 +89,6 @@ function SectionTitle({ children }: { children: string }) {
 
 export function ConfigForm() {
   const { user } = useAuth();
-  const accountName = (user?.name ?? "").trim();
   const networkIdEditable = canEditNetworkId({
     accountType: user?.accountType,
     legacyAccountType: user?.account_type,
@@ -161,53 +159,24 @@ export function ConfigForm() {
         </View>
       ) : null}
 
-      <SectionTitle>Your address</SectionTitle>
-      <Card style={{ gap: 14 }}>
-        <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          Neighbours only see your broadcast name. Leave it blank to use your
-          account name{accountName ? ` (${accountName})` : ""} in messages.
-        </Text>
-        <Field
-          label="Broadcast name"
-          value={draft.broadcastName}
-          onChangeText={(v) => update({ broadcastName: v })}
-          placeholder={accountName || "e.g. THE BLACK GUY"}
-        />
-        <AddressAutocompleteInput
-          label="Address"
-          value={draft.address}
-          onChange={(addr) => update({ address: addr })}
-          placeholder="169 Fred Young Drive, Toronto, Ontario"
-        />
-        <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          Start typing and pick a suggestion to set your home address.
-        </Text>
-        <Button
-          label={
-            saving ? "Saving…" : saved ? "Saved" : "Update address & broadcast name"
-          }
-          onPress={() => void onSave()}
-          disabled={loading || saving}
-          fullWidth
-        />
-      </Card>
-
       <SectionTitle>Smart-home integration</SectionTitle>
       <Card style={{ gap: 14 }}>
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          Configure how your smart-home device receives zone alerts. Use the
-          API key and network id on the device. Set a webhook for push delivery, or
-          leave it blank and rely on periodical polling.
+          First add a smart-home hub on the Devices page (DEV- ID). Copy the API
+          key and Network ID onto that hub. To receive Hex Zone alarms on the hub,
+          paste the hub’s public webhook URL below — Hex Zone will POST alarms
+          there. Leave webhook blank if the hub only polls.
         </Text>
         <Field
           label="Hardware identification (HID)"
           value={draft.sharedNotification.hid}
           onChangeText={() => {}}
-          placeholder="123456789-ABCD01"
+          placeholder="DEV-A1B2C3"
           editable={false}
         />
         <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          Smart-home device id registered in Device Manager.
+          Filled from your registered smart-home device (Devices → Add smart-home
+          device). MOB-/WEB- login clients are ignored here.
         </Text>
         <Field
           label="Network ID"
@@ -243,10 +212,12 @@ export function ConfigForm() {
               sharedNotification: { ...draft.sharedNotification, webhook: v },
             })
           }
-          placeholder="https://your-device.local/alert"
+          placeholder="https://hub.example.com/hooks/hex-zone"
         />
         <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          Optional callback URL on the device to accept pushed notifications.
+          When set, Hex Zone POSTs SENSOR/PANIC/WELLNESS and other zone alerts to
+          this URL (JSON event SMART_HOME_ALARM). Use a publicly reachable hub
+          URL.
         </Text>
         <Field
           label="Periodical check (sec)"
@@ -263,7 +234,7 @@ export function ConfigForm() {
           keyboardType="numeric"
         />
         <Text style={{ color: colors.textDim, fontSize: 11, marginTop: -8 }}>
-          How often the device polls the server when no webhook is set.
+          Hint for hubs that poll instead of (or in addition to) webhook push.
         </Text>
         <Button
           label={

@@ -25,12 +25,15 @@ import {
   X,
 } from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
-import { ScreenHeader } from "@/components/ui/ScreenHeader";
-import { AlertBellButton } from "@/components/ui/AlertBellButton";
+import { AppHeader } from "@/components/ui/AppHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { useAuth } from "@/context/AuthContext";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import {
+  parseGuestRequestChangedSocketEvent,
+} from "@/lib/messageSocket";
 import {
   approveGuestRequest,
   createGuestAccessQrToken,
@@ -660,7 +663,7 @@ function NetworkAccessSection({ zoneId }: { zoneId: string }) {
 
 export default function AccessScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const {
     effectiveZoneId,
     accountZoneId,
@@ -677,6 +680,12 @@ export default function AccessScreen() {
   // load so we don't fire a burst of notifications for pre-existing requests.
   const notifiedRequestIdsRef = useRef<Set<string>>(new Set());
   const notifyPrimedRef = useRef(false);
+
+  const { lastMessage, status: wsStatus } = useWebSocket({
+    token,
+    zoneIds: effectiveZoneId ? [effectiveZoneId] : [],
+    enabled: Boolean(token && effectiveZoneId),
+  });
 
   const params = useLocalSearchParams<{
     gt?: string;
@@ -757,14 +766,48 @@ export default function AccessScreen() {
     void loadRequests();
   }, [loadRequests]);
 
-  // Poll so the admin is alerted to new arrivals while this screen is open.
+  // Poll so the admin is alerted to new arrivals while this screen is open —
+  // only when the WebSocket is not connected.
   useEffect(() => {
     if (!effectiveZoneId) return;
+    if (wsStatus === "open") return;
     const interval = setInterval(() => {
       void loadRequests();
     }, 20_000);
     return () => clearInterval(interval);
-  }, [effectiveZoneId, loadRequests]);
+  }, [effectiveZoneId, loadRequests, wsStatus]);
+
+  useEffect(() => {
+    if (wsStatus === "open") void loadRequests();
+  }, [wsStatus, loadRequests]);
+
+  useEffect(() => {
+    if (!lastMessage) return;
+    const changed = parseGuestRequestChangedSocketEvent(lastMessage);
+    if (changed) {
+      if (
+        changed.zone_id &&
+        effectiveZoneId &&
+        changed.zone_id !== effectiveZoneId
+      ) {
+        return;
+      }
+      void loadRequests();
+      return;
+    }
+    try {
+      const parsed = JSON.parse(lastMessage) as { type?: string };
+      if (
+        parsed.type === "unexpected_guest" ||
+        parsed.type === "guest_is_here" ||
+        parsed.type === "PERMISSION_MESSAGE"
+      ) {
+        void loadRequests();
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [lastMessage, loadRequests, effectiveZoneId]);
 
   const onApprove = async (requestId: string) => {
     const result = await approveGuestRequest(requestId, effectiveZoneId);
@@ -787,11 +830,10 @@ export default function AccessScreen() {
   return (
     <GradientBackground>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-          <ScreenHeader
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 }}>
+          <AppHeader
             title="Access"
             subtitle="QR invites & guest arrivals"
-            right={<AlertBellButton />}
           />
 
           <SegmentedTabs tab={tab} onChange={setTab} />

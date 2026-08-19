@@ -11,15 +11,12 @@ import {
   Shield,
   Smartphone,
   Ticket,
-  User,
   UserCheck,
 } from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
 import { ScreenHeader } from "@/components/ui/ScreenHeader";
-import { AlertBellButton } from "@/components/ui/AlertBellButton";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Chip } from "@/components/ui/Chip";
 import { ConfigForm } from "@/components/settings/ConfigForm";
 import { useAuth } from "@/context/AuthContext";
 import { useNotifications } from "@/context/NotificationContext";
@@ -214,50 +211,12 @@ export default function SettingsScreen() {
   return (
     <GradientBackground>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 }}>
           <ScreenHeader
-            title="Settings"
-            subtitle="Account & preferences"
-            right={<AlertBellButton />}
+            title="Account settings"
+            subtitle="Devices, alerts & integrations"
+            showBack
           />
-
-          <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
-            <Card glow>
-              <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
-                <View
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 28,
-                    backgroundColor: colors.bgSurface,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <User size={28} color={colors.accent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      color: colors.text,
-                      fontSize: 18,
-                      fontWeight: "800",
-                    }}
-                  >
-                    {user?.name ?? "Member"}
-                  </Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 13, marginTop: 2 }}>
-                    {user?.email ?? "—"}
-                  </Text>
-                  <Chip
-                    label={String(user?.role ?? "administrator")}
-                    tone="muted"
-                    style={{ marginTop: 8 }}
-                  />
-                </View>
-              </View>
-            </Card>
-          </View>
 
           <ConfigForm />
 

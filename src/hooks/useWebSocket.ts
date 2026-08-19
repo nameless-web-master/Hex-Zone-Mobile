@@ -72,6 +72,7 @@ function closeSocket() {
   clearReconnectTimer();
   const ws = sharedManager.ws;
   sharedManager.ws = null;
+  sharedManager.lastMessage = null;
   if (ws) {
     ws.onopen = null;
     ws.onmessage = null;

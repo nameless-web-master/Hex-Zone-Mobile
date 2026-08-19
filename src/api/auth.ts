@@ -29,6 +29,7 @@ export type AuthUser = {
   account_owner_id?: number;
   address?: string;
   phone?: string | null;
+  avatar_url?: string | null;
   active?: boolean;
   mapCenter?: MapCenter | null;
   map_center?: MapCenter | null;
@@ -164,7 +165,11 @@ function profileHasEmail(user: AuthUser | null | undefined): boolean {
 }
 
 export async function fetchProfile() {
-  const primary = await request<AuthUser>({ method: "GET", url: "/me" });
+  const primary = await request<AuthUser>({
+    method: "GET",
+    url: "/me",
+    timeout: 15000,
+  });
   // Fall back to /owners/me when /me returns nothing OR when it returns a user
   // that is missing the email (the Settings header shows "—" otherwise). The
   // two endpoints can return slightly different shapes depending on the
@@ -173,6 +178,7 @@ export async function fetchProfile() {
   const legacy = await request<AuthUser>({
     method: "GET",
     url: "/owners/me",
+    timeout: 15000,
   });
   if (!legacy.data) return primary.data ? primary : legacy;
   if (!primary.data) return legacy;

@@ -11,6 +11,7 @@ import { listMessageFeatureBlocks, type MessageFeatureBlock } from "@/api/messag
 import { filterMessagesForBlocks } from "@/lib/messageBlocks";
 import {
   handleWellnessAckFrame,
+  parseBlocksChangedSocketEvent,
   parseMessageFeatureSocketEvent,
   parseMessageSocketPayload,
 } from "@/lib/messageSocket";
@@ -166,6 +167,10 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
   useEffect(() => {
     if (!lastMessage) return;
     if (handleWellnessAckFrame(lastMessage)) return;
+    if (parseBlocksChangedSocketEvent(lastMessage)) {
+      scheduleInboxRefetchFromSocket();
+      return;
+    }
     const geoEvent = parseMessageFeatureSocketEvent(lastMessage);
     if (geoEvent?.type === "NEW_GEO_MESSAGE") {
       applyGeoPropagationToInbox(geoEvent.data);
@@ -183,7 +188,8 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
       if (
         parsed.type === "PERMISSION_MESSAGE" ||
         parsed.type === "unexpected_guest" ||
-        parsed.type === "guest_is_here"
+        parsed.type === "guest_is_here" ||
+        parsed.type === "GUEST_REQUEST_CHANGED"
       ) {
         scheduleInboxRefetchFromSocket();
       }
@@ -213,13 +219,18 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
   }, [lastNotification, hydrateInbox]);
 
   useEffect(() => {
+    if (wsStatus === "open") void hydrateInbox();
+  }, [wsStatus, hydrateInbox]);
+
+  useEffect(() => {
+    if (wsStatus === "open") return;
     if (ownerId == null || !token) return;
     const pollMs = isRunningExpoGo() ? 30_000 : POLL_INTERVAL_MS;
     const interval = setInterval(() => {
       void hydrateInbox();
     }, pollMs);
     return () => clearInterval(interval);
-  }, [ownerId, token, hydrateInbox]);
+  }, [ownerId, token, hydrateInbox, wsStatus]);
 
   useEffect(() => {
     return () => {

@@ -8,7 +8,7 @@ import {
   type DeviceRecord,
 } from "@/api/devices";
 import { normalizeAccountType, type NormalizedAccountType } from "@/lib/accountLimits";
-import { getOrCreateDeviceHid } from "@/lib/storage";
+import { getOrCreateDeviceHid, getToken } from "@/lib/storage";
 import type { AuthUser } from "@/api/auth";
 
 /** Thrown when login succeeds but another device holds the active session. */
@@ -40,7 +40,7 @@ export const DEVICE_PRESENCE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export const DEVICE_CHANGE_PROMPT_TITLE = "Change the device?";
 export const DEVICE_CHANGE_PROMPT_MESSAGE =
-  "This account is already active on another device. Use this device instead? The other device will be signed out.";
+  "This account is already active on another device. Use this device instead? The other device will be signed out and removed.";
 export const DEVICE_CHANGE_DECLINED_MESSAGE =
   "Login cancelled. Sign out on the other device first, or choose to change the device when prompted.";
 export const DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE =
@@ -60,8 +60,20 @@ function deviceLastSeenMs(device: DeviceRecord): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-/** Whether another device currently holds the account session (login gate). */
+/** Phone (MOB-) and browser (WEB-) login clients — not smart-home hubs. */
+export function isClientSessionHid(hid?: string | null): boolean {
+  const upper = String(hid ?? "").trim().toUpperCase();
+  return upper.startsWith("MOB-") || upper.startsWith("WEB-");
+}
+
+export function isSmartHomeHid(hid?: string | null): boolean {
+  const upper = String(hid ?? "").trim().toUpperCase();
+  return Boolean(upper) && !isClientSessionHid(upper);
+}
+
+/** Whether another phone/web device currently holds the account session. */
 export function isDeviceSessionBlocking(device: DeviceRecord): boolean {
+  if (!isClientSessionHid(device.hid)) return false;
   return device.is_online === true;
 }
 
@@ -77,7 +89,11 @@ export function isAccountInUseError(message: string): boolean {
   return isDeviceSessionConflictMessage(message);
 }
 
-/** True while this hardware id still holds the active account session. */
+/**
+ * True unless another device clearly holds the live session.
+ * Missing/offline local rows alone must not force logout — cold start and
+ * transient sync gaps are recovered by `syncCurrentDevice`.
+ */
 export async function isLocalDeviceSessionActive(
   ownerId: string,
 ): Promise<boolean> {
@@ -88,11 +104,17 @@ export async function isLocalDeviceSessionActive(
   const mine = (devices.data ?? []).filter(
     (d) => !id || String(d.owner_id ?? "") === id,
   );
+  const localHidUpper = localHid.toUpperCase();
   const local = mine.find(
-    (d) => String(d.hid).toUpperCase() === localHid.toUpperCase(),
+    (d) => String(d.hid).toUpperCase() === localHidUpper,
   );
-  if (!local) return false;
-  return local.is_online === true;
+  const otherOnline = mine.some(
+    (d) =>
+      String(d.hid).toUpperCase() !== localHidUpper &&
+      isDeviceSessionBlocking(d),
+  );
+  if (!otherOnline) return true;
+  return local?.is_online === true;
 }
 
 function ownerDevicesForUser(
@@ -114,6 +136,7 @@ function mapCreateError(error: string): DeviceSyncResult {
 }
 
 export async function setCurrentDeviceOffline(): Promise<void> {
+  if (!(await getToken())) return;
   const localHid = await getOrCreateDeviceHid();
   const devices = await getDevices();
   const existing = (devices.data ?? []).find(

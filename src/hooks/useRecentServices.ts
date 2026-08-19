@@ -95,7 +95,7 @@ export function useRecentServices(zoneId?: string) {
     [normalizedZoneId],
   );
 
-  const { lastMessage } = useWebSocket({
+  const { lastMessage, status } = useWebSocket({
     token,
     zoneIds,
     enabled: Boolean(token),
@@ -103,6 +103,15 @@ export function useRecentServices(zoneId?: string) {
 
   useEffect(() => {
     if (!lastMessage) return;
+    try {
+      const parsed = JSON.parse(lastMessage) as { type?: string };
+      if (parsed.type === "BLOCKS_CHANGED") {
+        scheduleRefresh();
+        return;
+      }
+    } catch {
+      /* fall through */
+    }
     const row = parseMessageSocketPayload(lastMessage);
     if (row) {
       if (row.type === "SERVICE") prependService(row);
@@ -115,10 +124,15 @@ export function useRecentServices(zoneId?: string) {
   }, [refresh]);
 
   useEffect(() => {
+    if (status === "open") void refresh();
+  }, [status, refresh]);
+
+  useEffect(() => {
+    if (status === "open") return;
     if (ownerId == null || !token) return;
     const timer = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(timer);
-  }, [ownerId, token, refresh]);
+  }, [status, ownerId, token, refresh]);
 
   useEffect(() => {
     return () => {

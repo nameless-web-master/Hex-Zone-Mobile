@@ -1,459 +1,1557 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  PanResponder,
+  Alert,
+  FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ChevronUp, Save, Trash2 } from "lucide-react-native";
-import { DashboardMap } from "@/components/dashboard/DashboardMap";
-import { ZoneTypePicker } from "@/components/dashboard/ZoneTypePicker";
-import { ZoneTypePanel } from "@/components/dashboard/ZoneTypePanel";
-import { Input } from "@/components/ui/Input";
+import { useRouter, useLocalSearchParams, type Href } from "expo-router";
+import {
+  BellRing,
+  HeartPulse,
+  HelpCircle,
+  ImagePlus,
+  Megaphone,
+  MessageSquare,
+  Radar,
+  Send,
+  Siren,
+  Wrench,
+} from "lucide-react-native";
+import { GradientBackground } from "@/components/ui/GradientBackground";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { Card } from "@/components/ui/Card";
+import { Chip } from "@/components/ui/Chip";
 import { Button } from "@/components/ui/Button";
-import { Logo } from "@/components/ui/Logo";
-import { AlertBellButton } from "@/components/ui/AlertBellButton";
-import { RecentServicesSection } from "@/components/dashboard/RecentServicesSection";
+import { BottomSheet } from "@/components/ui/BottomSheet";
+import { MessageInboxFilterBar } from "@/components/messages/MessageInboxFilterBar";
+import { InboxMessageCard } from "@/components/messages/InboxMessageCard";
+import { MessageImageGallery } from "@/components/messages/MessageImageGallery";
+import { AvatarUploadModal } from "@/components/settings/AvatarUploadModal";
+import { WellnessAckInline } from "@/components/messages/WellnessAckInline";
+import { useMessagesFeed } from "@/hooks/useMessagesFeed";
+import { useZoneNameLookup } from "@/hooks/useZoneNameLookup";
+import { useBottomSafeInset } from "@/hooks/useBottomSafeInset";
+import { useNotifications } from "@/context/NotificationContext";
 import { useAuth } from "@/context/AuthContext";
-import { MAX_ZONE_NAME_LENGTH, useZoneBuilder } from "@/hooks/useZoneBuilder";
-import { colorForZoneType, summarizeZone } from "@/lib/zoneGeometry";
+import { sendMessage, type Message } from "@/api/messages";
+import { uploadMessageImage } from "@/api/settings";
+import {
+  propagateMessageFeatureMessage,
+  searchPrivateMessageRecipients,
+  type PrivateSearchMember,
+} from "@/api/messageFeature";
+import { getMembers } from "@/api/members";
+import { useMemberPresence } from "@/hooks/useMemberPresence";
+import { listGuestRequests } from "@/api/guest";
+import { presentLocalMessageNotification } from "@/lib/notifications";
+import {
+  privateLocationStatusMessage,
+  type PrivateLocationStatus,
+} from "@/lib/privateMessageLocation";
+import {
+  messagePositionSourceLabel,
+  resolveMessagePropagationPositionForType,
+} from "@/lib/messagePosition";
+import { getOrCreateDeviceHid } from "@/lib/storage";
+import { isRunningExpoGo } from "@/lib/pushSupport";
+import {
+  getMessageTypeCategory,
+  groupMessageTypesForUI,
+  isAccessGuestChannelType,
+  isPrivateMessageType,
+  toMessageType,
+  toMessageTypeLabel,
+  usesGeoPropagationMessageType,
+  type MessageType,
+} from "@/lib/messageTypes";
+import {
+  applyMessageInboxFilters,
+  messageTypesForCategories,
+} from "@/lib/messageInboxFilters";
+import {
+  resolveBroadcastName,
+  useAppSettings,
+  type QuickMessageType,
+} from "@/lib/appSettings";
+import { MAX_MESSAGE_IMAGES } from "@/lib/messageImages";
+import { messageAvatarLabel, messageBroadcastLabel } from "@/lib/messageBroadcast";
+import type { ZoneNameLookup } from "@/lib/messageZoneLabel";
+import {
+  isEmergencyMessageType,
+  isUnknownMessageType,
+  isServiceMessageType,
+  SERVICE_MESSAGE_UI,
+  UNKNOWN_MESSAGE_UI,
+  UNKNOWN_HOLD_MS,
+  wellnessResponseTrackingEnabled,
+} from "@/lib/messageWorkflow";
+import {
+  SERVICE_PA_TOPICS,
+  buildServicePaMsgPayload,
+  getTopicOption,
+  isServicePaMessageType,
+  serviceTopicRequiresSubtopic,
+  validateServicePaCompose,
+  type ServicePaComposeFields,
+} from "@/lib/servicePaTopics";
 import { colors } from "@/theme/colors";
 
-export default function DashboardScreen() {
-  const { ownerZoneId, user } = useAuth();
-  // Always create zones against the account owner's zone_id, not the
-  // signed-in user's. For admins they're the same; for non-admin USERS
-  // the owner's zone is the canonical one for the whole account.
-  const builder = useZoneBuilder(ownerZoneId || undefined, {
-    currentUserId: user?.id != null ? String(user.id) : undefined,
-    isAccountAdministrator: String(user?.role ?? "").toLowerCase() === "administrator",
+type OwnerNameMap = Record<number, string>;
+type OwnerAvatarMap = Record<number, string>;
+
+function MessageRow({
+  item,
+  selfOwnerId,
+  selfBroadcastName,
+  selfRealName,
+  selfEmail,
+  selfAvatarUrl,
+  ownerNames,
+  ownerAvatars,
+  senderOnline = false,
+  zoneNames,
+  highlighted = false,
+}: {
+  item: Message;
+  selfOwnerId: number | null;
+  selfBroadcastName: string;
+  selfRealName?: string | null;
+  selfEmail?: string | null;
+  selfAvatarUrl?: string | null;
+  ownerNames: OwnerNameMap;
+  ownerAvatars: OwnerAvatarMap;
+  senderOnline?: boolean;
+  zoneNames?: ZoneNameLookup;
+  highlighted?: boolean;
+}) {
+  const router = useRouter();
+
+  const broadcast = messageBroadcastLabel(item, {
+    selfOwnerId,
+    selfBroadcastName,
+    resolveOwnerName: (id) => ownerNames[id] ?? null,
   });
-  const [panelOpen, setPanelOpen] = useState(true);
+  const avatarName = messageAvatarLabel(item, {
+    selfOwnerId,
+    selfRealName,
+    resolveOwnerName: (id) => ownerNames[id] ?? null,
+  });
+  const isSelf =
+    selfOwnerId != null &&
+    typeof item.sender_id === "number" &&
+    item.sender_id === selfOwnerId;
 
-  const dragResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_e, g) =>
-        Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
-      onPanResponderRelease: (_e, g) => {
-        if (g.dy > 24) setPanelOpen(false);
-      },
-    }),
-  ).current;
+  const senderId =
+    typeof item.sender_id === "number" && item.sender_id > 0
+      ? item.sender_id
+      : null;
+  const thinAvatar =
+    senderId != null ? `/owners/${senderId}/avatar` : null;
+  const avatarUrl =
+    senderId != null && selfOwnerId != null && senderId === selfOwnerId
+      ? selfAvatarUrl ?? ownerAvatars[senderId] ?? thinAvatar
+      : senderId != null
+        ? ownerAvatars[senderId] ?? thinAvatar
+        : null;
 
-  const sectionTitle = useMemo(() => {
-    switch (builder.zoneType) {
-      case "geofence":
-        return "Geofence zone";
-      case "grid":
-        return "Grid zoning";
-      case "proximity":
-        return "Proximity-to-source";
-      case "dynamic":
-        return "Dynamic-size";
-      case "communal_id":
-        return "Communal ID";
-      case "government_local_code":
-        return "Government local code";
-      case "object":
-        return "Object zoning";
-    }
-  }, [builder.zoneType]);
+  const privateCounterpartId =
+    item.type === "PRIVATE" && selfOwnerId != null
+      ? item.sender_id != null && item.sender_id !== selfOwnerId
+        ? item.sender_id
+        : item.receiver_id != null && item.receiver_id !== selfOwnerId
+          ? item.receiver_id
+          : null
+      : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <DashboardMap
-        center={builder.mapCenter}
-        drawMode={panelOpen ? builder.drawMode : "none"}
-        draftRing={builder.draftRing}
-        previewRings={builder.previewRings}
-        draftCircle={builder.draftCircle}
-        draftMarker={builder.draftMarker}
-        selectedH3Cells={builder.selectedH3Cells}
-        h3Resolution={builder.h3Resolution}
-        savedLayers={builder.layers}
-        draftColor={builder.draftColor}
-        draftCircleSolid={builder.draftCircleSolid}
-        fitDraftToken={builder.fitDraftToken}
-        locationRequestNonce={builder.locationRequestNonce}
-        onMapClick={builder.handleMapClick}
-        onH3Toggle={builder.toggleH3Cell}
-        onDeviceLocation={builder.applyDeviceLocation}
-        onDeviceLocationError={builder.handleDeviceLocationError}
-        style={{ flex: 1 }}
-      />
+    <InboxMessageCard
+      item={item}
+      userName={broadcast}
+      avatarName={avatarName}
+      avatarEmail={isSelf ? selfEmail : null}
+      avatarUrl={avatarUrl}
+      online={senderOnline}
+      selfOwnerId={selfOwnerId}
+      zoneNames={zoneNames}
+      highlighted={highlighted}
+      footerExtra={
+        <>
+          {item.type === "WELLNESS_CHECK" &&
+          wellnessResponseTrackingEnabled(item) ? (
+            <WellnessAckInline
+              messageEventId={item.id}
+              selfOwnerId={selfOwnerId}
+              senderId={item.sender_id ?? null}
+            />
+          ) : null}
+          {privateCounterpartId != null ? (
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: "/(tabs)/private-thread",
+                  params: {
+                    otherOwnerId: String(privateCounterpartId),
+                    selfOwnerId: String(selfOwnerId ?? ""),
+                  },
+                } as unknown as Href)
+              }
+              style={{
+                marginTop: 4,
+                alignSelf: "flex-start",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+              }}
+            >
+              <MessageSquare size={14} color={colors.accent} />
+              <Text
+                style={{ color: colors.accent, fontSize: 12, fontWeight: "700" }}
+              >
+                View private thread
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
+      }
+    />
+  );
+}
 
-      {/* Header */}
-      <SafeAreaView
-        edges={["top"]}
-        style={{ position: "absolute", top: 0, left: 0, right: 0 }}
-        pointerEvents="box-none"
-      >
+type QuickAction = {
+  type: QuickMessageType;
+  label: string;
+  icon: typeof BellRing;
+  tone: "alarm" | "messaging";
+};
+
+const ALARM_ACTIONS: QuickAction[] = [
+  { type: "PANIC", label: "PANIC", icon: BellRing, tone: "alarm" },
+  { type: "SENSOR", label: "HOME ALARM", icon: Radar, tone: "alarm" },
+  { type: "NS_PANIC", label: "NS PANIC", icon: Siren, tone: "alarm" },
+  { type: "UNKNOWN", label: "UNKNOWN", icon: HelpCircle, tone: "alarm" },
+  {
+    type: "WELLNESS_CHECK",
+    label: "WELLNESS CHECK",
+    icon: HeartPulse,
+    tone: "alarm",
+  },
+];
+
+const MESSAGING_ACTIONS: QuickAction[] = [
+  {
+    type: "PRIVATE",
+    label: "PRIVATE MESSAGE",
+    icon: MessageSquare,
+    tone: "messaging",
+  },
+  {
+    type: "PA",
+    label: "PUBLIC ANNOUNCEMENT",
+    icon: Megaphone,
+    tone: "messaging",
+  },
+  { type: "SERVICE", label: "SERVICES", icon: Wrench, tone: "messaging" },
+];
+
+function QuickActionButton({
+  action,
+  onPress,
+  disabled,
+  sending,
+}: {
+  action: QuickAction;
+  onPress: () => void;
+  disabled: boolean;
+  sending: boolean;
+}) {
+  const Icon = action.icon;
+  const isAlarm = action.tone === "alarm";
+  const isUnknown = isUnknownMessageType(action.type as MessageType);
+  const isService = isServiceMessageType(action.type as MessageType);
+  const urgent = isEmergencyMessageType(action.type as MessageType);
+  const [holdProgress, setHoldProgress] = useState(0);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdStartedAtRef = useRef<number | null>(null);
+  const holdTriggeredRef = useRef(false);
+
+  const clearHold = useCallback(() => {
+    if (holdTimerRef.current != null) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (holdTickRef.current != null) {
+      clearInterval(holdTickRef.current);
+      holdTickRef.current = null;
+    }
+    holdStartedAtRef.current = null;
+    holdTriggeredRef.current = false;
+    setHoldProgress(0);
+  }, []);
+
+  useEffect(() => () => clearHold(), [clearHold]);
+
+  const handleUnknownPressIn = useCallback(() => {
+    if (disabled || sending || !isUnknown) return;
+    clearHold();
+    holdStartedAtRef.current = Date.now();
+    holdTickRef.current = setInterval(() => {
+      const startedAt = holdStartedAtRef.current;
+      if (startedAt == null) return;
+      const elapsed = Date.now() - startedAt;
+      setHoldProgress(Math.min(1, elapsed / UNKNOWN_HOLD_MS));
+    }, 50);
+    holdTimerRef.current = setTimeout(() => {
+      holdTriggeredRef.current = true;
+      clearHold();
+      onPress();
+    }, UNKNOWN_HOLD_MS);
+  }, [clearHold, disabled, isUnknown, onPress, sending]);
+
+  const handleUnknownPressOut = useCallback(() => {
+    if (!isUnknown || holdTriggeredRef.current) return;
+    clearHold();
+  }, [clearHold, isUnknown]);
+
+  const holdSecondsLeft =
+    holdProgress > 0
+      ? Math.max(1, Math.ceil((1 - holdProgress) * (UNKNOWN_HOLD_MS / 1000)))
+      : UNKNOWN_HOLD_MS / 1000;
+
+  const bg = isUnknown
+    ? UNKNOWN_MESSAGE_UI.badge
+    : isService
+      ? SERVICE_MESSAGE_UI.badge
+      : urgent
+        ? colors.danger
+        : isAlarm
+          ? "#FCE7EA"
+          : "#FBEFD8";
+  const border = isUnknown
+    ? UNKNOWN_MESSAGE_UI.border
+    : isService
+      ? SERVICE_MESSAGE_UI.border
+      : urgent
+        ? colors.danger
+        : isAlarm
+          ? "#F3C2CA"
+          : "#F0DBB0";
+  const fg =
+    isUnknown || isService || urgent
+      ? "#fff"
+      : isAlarm
+        ? colors.danger
+        : colors.warning;
+  return (
+    <Pressable
+      onPress={isUnknown ? undefined : onPress}
+      onPressIn={isUnknown ? handleUnknownPressIn : undefined}
+      onPressOut={isUnknown ? handleUnknownPressOut : undefined}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={
+        isUnknown
+          ? `Hold for ${UNKNOWN_HOLD_MS / 1000} seconds to send unknown alert`
+          : action.label
+      }
+      style={{
+        flexBasis: "48%",
+        flexGrow: 1,
+        backgroundColor: bg,
+        borderWidth: 1,
+        borderColor: border,
+        borderRadius: 18,
+        paddingVertical: 18,
+        paddingHorizontal: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        opacity: disabled ? 0.6 : 1,
+        overflow: "hidden",
+      }}
+    >
+      {isUnknown && holdProgress > 0 && !sending ? (
         <View
           style={{
-            marginHorizontal: 14,
-            marginTop: 6,
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderRadius: 16,
-            backgroundColor: "rgba(255,255,255,0.92)",
-            borderWidth: 1,
-            borderColor: colors.border,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 4,
+            backgroundColor: "rgba(255,255,255,0.25)",
           }}
         >
-          <Logo size={22} />
           <View
             style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              flex: 1,
-              justifyContent: "flex-end",
-              paddingRight: 10,
+              height: "100%",
+              width: `${holdProgress * 100}%`,
+              backgroundColor: "#fff",
             }}
-          >
-            <View
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: colorForZoneType(builder.zoneType),
-              }}
+          />
+        </View>
+      ) : null}
+      {sending ? (
+        <ActivityIndicator color={fg} />
+      ) : (
+        <Icon size={28} color={fg} />
+      )}
+      <Text
+        style={{
+          color: fg,
+          fontSize: 13,
+          fontWeight: "800",
+          letterSpacing: 0.5,
+          textAlign: "center",
+        }}
+      >
+        {sending
+          ? "Sending…"
+          : isUnknown && holdProgress > 0
+            ? `Hold… ${holdSecondsLeft}s`
+            : action.label}
+      </Text>
+    </Pressable>
+  );
+}
+
+export default function MessagesScreen() {
+  const { user } = useAuth();
+  const { isOnline } = useMemberPresence();
+  const router = useRouter();
+  const searchParams = useLocalSearchParams<{
+    type?: string;
+    message?: string;
+    compose?: string;
+    n?: string;
+  }>();
+  const settings = useAppSettings();
+  const selfRealName =
+    (user?.name ?? "").trim() ||
+    `${user?.first_name ?? ""} ${user?.last_name ?? ""}`.trim();
+  const selfBroadcastName = resolveBroadcastName(selfRealName || user?.name);
+  const {
+    messages,
+    loading,
+    error,
+    refresh,
+    applyGeoPropagationToInbox,
+    ownerId,
+    zoneId,
+    wsStatus,
+  } = useMessagesFeed();
+  const { zoneNames } = useZoneNameLookup();
+  const { pushToken, permissionError } = useNotifications();
+  const [typeFilter, setTypeFilter] = useState<"all" | MessageType>("all");
+  const [zoneFilter, setZoneFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(
+    null,
+  );
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [actionsSheetOpen, setActionsSheetOpen] = useState(false);
+  const [composeType, setComposeType] = useState<MessageType>("PA");
+  const bottomInset = useBottomSafeInset();
+  const [composeReceiverId, setComposeReceiverId] = useState("");
+  const [draft, setDraft] = useState("");
+  const [composeImages, setComposeImages] = useState<string[]>([]);
+  const [imagePickerOpen, setImagePickerOpen] = useState(false);
+  const [composeServicePaFields, setComposeServicePaFields] =
+    useState<ServicePaComposeFields>({ subject: "", topic: "", subtopic: "" });
+  const [sending, setSending] = useState(false);
+  const [composeStatus, setComposeStatus] = useState("");
+  const [quickStatus, setQuickStatus] = useState("");
+  const [quickBusy, setQuickBusy] = useState<QuickMessageType | null>(null);
+  const [members, setMembers] = useState<
+    { id: number; name: string; zoneId: string }[]
+  >([]);
+  const [privateSearchQuery, setPrivateSearchQuery] = useState("");
+  const [privateSearchResults, setPrivateSearchResults] = useState<
+    PrivateSearchMember[]
+  >([]);
+  const [privateSearchLoading, setPrivateSearchLoading] = useState(false);
+  const [senderZoneIds, setSenderZoneIds] = useState<string[]>([]);
+  const [privateLocationStatus, setPrivateLocationStatus] =
+    useState<PrivateLocationStatus | null>(null);
+  const [ownerNames, setOwnerNames] = useState<OwnerNameMap>({});
+  const [ownerAvatars, setOwnerAvatars] = useState<OwnerAvatarMap>({});
+  const [guestOptions, setGuestOptions] = useState<
+    { id: string; label: string }[]
+  >([]);
+  const [loadingComposeMeta, setLoadingComposeMeta] = useState(false);
+
+  const composeZoneId = useMemo(
+    () => (zoneId?.trim() ? zoneId.trim() : null),
+    [zoneId],
+  );
+
+  const groupedTypeOptions = useMemo(() => groupMessageTypesForUI(), []);
+  const composeTypeOptions = useMemo(
+    () =>
+      groupedTypeOptions
+        .map((group) => ({
+          ...group,
+          options: group.options.filter((o) => o.type !== "PERMISSION"),
+        }))
+        .filter((group) => group.options.length > 0),
+    [groupedTypeOptions],
+  );
+  const visibleMessagingActions = MESSAGING_ACTIONS;
+
+  useEffect(() => {
+    const typeParam =
+      typeof searchParams.type === "string" ? searchParams.type.trim() : "";
+    const messageParam =
+      typeof searchParams.message === "string"
+        ? searchParams.message.trim()
+        : "";
+    const composeParam =
+      typeof searchParams.compose === "string"
+        ? searchParams.compose.trim().toLowerCase()
+        : "";
+    if (typeParam) {
+      const resolved = toMessageType(typeParam);
+      if (resolved && getMessageTypeCategory(resolved) !== "Alarm") {
+        setTypeFilter(resolved);
+      }
+    }
+    if (messageParam) setHighlightMessageId(messageParam);
+    if (
+      composeParam === "1" ||
+      composeParam === "true" ||
+      composeParam === "new"
+    ) {
+      setActionsSheetOpen(true);
+    }
+  }, [
+    searchParams.type,
+    searchParams.message,
+    searchParams.compose,
+    searchParams.n,
+  ]);
+
+  const confirmEmergencySend = useCallback(
+    (type: MessageType): Promise<boolean> =>
+      new Promise((resolve) => {
+        if (!isEmergencyMessageType(type)) {
+          resolve(true);
+          return;
+        }
+        Alert.alert(
+          "Emergency alert",
+          `${toMessageTypeLabel(type)} uses your current location. Inside the admin primary zone, all invited members and the administrator are notified; outside the primary zone, no one receives it. Block filters are bypassed.`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            {
+              text: "Send",
+              style: "destructive",
+              onPress: () => resolve(true),
+            },
+          ],
+        );
+      }),
+    [],
+  );
+
+  const inboxTypeOptions = useMemo(
+    () => messageTypesForCategories(["Alert", "Access"]),
+    [],
+  );
+
+  const allZoneIds = useMemo(() => {
+    const fromMessages = messages
+      .filter((m) => m.category !== "Alarm")
+      .map((m) => String(m.zone_id ?? "").trim())
+      .filter(Boolean);
+    return Array.from(new Set(fromMessages)).sort();
+  }, [messages]);
+
+  useEffect(() => {
+    if (zoneFilter !== "all" && !allZoneIds.includes(zoneFilter)) {
+      setZoneFilter("all");
+    }
+  }, [allZoneIds, zoneFilter]);
+
+  const filtered = useMemo(
+    () =>
+      applyMessageInboxFilters(messages, {
+        excludeCategories: ["Alarm"],
+        zoneFilter,
+        typeFilter,
+        dateFrom,
+        dateTo,
+        search,
+      }),
+    [messages, zoneFilter, typeFilter, dateFrom, dateTo, search],
+  );
+
+  // Load members once so inbox rows can resolve a friendly name / avatar for
+  // senders that did not embed a broadcast name.
+  useEffect(() => {
+    let active = true;
+    void getMembers().then((res) => {
+      if (!active) return;
+      const names: OwnerNameMap = {};
+      const avatars: OwnerAvatarMap = {};
+      (res.data ?? []).forEach((row) => {
+        const id = Number(row.id);
+        if (!Number.isFinite(id) || id <= 0) return;
+        const name =
+          row.name ||
+          `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+          row.email ||
+          "";
+        if (name) names[id] = name;
+        const avatar =
+          typeof row.avatar_url === "string" ? row.avatar_url.trim() : "";
+        if (avatar) avatars[id] = avatar;
+      });
+      setOwnerNames(names);
+      setOwnerAvatars(avatars);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!composeOpen) return;
+    let active = true;
+    setLoadingComposeMeta(true);
+    void (
+      composeZoneId
+        ? listGuestRequests(composeZoneId)
+        : Promise.resolve({ data: [], error: null, loading: false })
+    )
+      .then((guestsRes) => {
+        if (!active) return;
+        const guestRows = guestsRes.data ?? [];
+        setGuestOptions(
+          guestRows
+            .filter((g) => g.approval_status !== "REJECTED")
+            .map((g) => ({
+              id: g.guest_id,
+              label: `${g.guest_name?.trim() || "Guest"} — ${g.guest_id.slice(0, 10)}…`,
+            })),
+        );
+      })
+      .finally(() => {
+        if (active) setLoadingComposeMeta(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [composeOpen, composeZoneId]);
+
+  useEffect(() => {
+    if (!composeOpen || !isPrivateMessageType(composeType)) {
+      if (!isPrivateMessageType(composeType)) {
+        setSenderZoneIds([]);
+        setPrivateLocationStatus(null);
+        setPrivateSearchResults([]);
+      }
+      return;
+    }
+
+    let active = true;
+    setPrivateSearchLoading(true);
+    const debounceMs = privateSearchQuery.trim().length >= 2 ? 300 : 0;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const resolved = await resolveMessagePropagationPositionForType(
+          "PRIVATE",
+          user?.mapCenter ?? user?.map_center ?? null,
+        );
+        const position = "error" in resolved ? undefined : resolved.position;
+        const result = await searchPrivateMessageRecipients(
+          privateSearchQuery,
+          position,
+        );
+        if (!active) return;
+        setPrivateSearchLoading(false);
+        setSenderZoneIds(result.data?.zone_ids ?? []);
+        setPrivateLocationStatus(result.data?.location_status ?? null);
+        setPrivateSearchResults(result.data?.members ?? []);
+      })();
+    }, debounceMs);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [
+    composeOpen,
+    composeType,
+    privateSearchQuery,
+    user?.mapCenter,
+    user?.map_center,
+  ]);
+
+  useEffect(() => {
+    setComposeReceiverId("");
+    setComposeStatus("");
+    setPrivateSearchQuery("");
+    setPrivateSearchResults([]);
+  }, [composeType]);
+
+  useEffect(() => {
+    if (composeType !== "PERMISSION") return;
+    setComposeType("CHAT");
+    setComposeStatus(
+      "PERMISSION is system-generated; switched to CHAT for guest messaging.",
+    );
+  }, [composeType]);
+
+  const realtimeHint = useMemo(() => {
+    if (isRunningExpoGo()) {
+      return "Polling inbox every 30s (Expo Go has no remote push on Android)";
+    }
+    if (pushToken) {
+      const ws =
+        wsStatus === "open"
+          ? " · live socket"
+          : wsStatus === "connecting"
+            ? " · connecting socket"
+            : "";
+      return `Push + inbox sync${ws}`;
+    }
+    return permissionError ?? "Enable notifications in a dev build for alarms";
+  }, [pushToken, permissionError, wsStatus]);
+
+  // One-tap quick alert: sends a pre-programmed message via geo propagation.
+  const sendQuickAlert = useCallback(
+    async (type: QuickMessageType) => {
+      if (quickBusy) return;
+      if (isPrivateMessageType(type as MessageType)) {
+        setComposeType(type as MessageType);
+        setDraft((settings.quickMessages[type] ?? "").trim());
+        setActionsSheetOpen(false);
+        setComposeOpen(true);
+        return;
+      }
+      if (!(await confirmEmergencySend(type as MessageType))) return;
+      const presetText = (settings.quickMessages[type] ?? "").trim();
+      if (!presetText) {
+        // Types without a preset (e.g. PRIVATE) open the composer instead.
+        setComposeType(type as MessageType);
+        setDraft("");
+        setActionsSheetOpen(false);
+        setComposeOpen(true);
+        return;
+      }
+      setQuickBusy(type);
+      setQuickStatus(`Sending ${toMessageTypeLabel(type as MessageType)}…`);
+      try {
+        const resolved = await resolveMessagePropagationPositionForType(
+          type as MessageType,
+          user?.mapCenter ?? user?.map_center ?? null,
+        );
+        if ("error" in resolved) throw new Error(resolved.error);
+        const hid = await getOrCreateDeviceHid();
+        const result = await propagateMessageFeatureMessage({
+          type: type as MessageType,
+          hid,
+          msg: { description: presetText, broadcast_name: selfBroadcastName },
+          position: resolved.position,
+        });
+        if (result.error) throw new Error(result.error);
+        const body = result.data;
+        if (body && !body.skipped && ownerId != null) {
+          applyGeoPropagationToInbox({
+            ...body,
+            sender_id: body.sender_id ?? ownerId,
+            zone_id:
+              body.zone_id ?? body.zone_ids?.[0] ?? composeZoneId ?? undefined,
+          });
+        }
+        setQuickStatus(
+          `${toMessageTypeLabel(type as MessageType)} sent · ${messagePositionSourceLabel(resolved.source)}`,
+        );
+        setActionsSheetOpen(false);
+        void refresh();
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Could not send the alert.";
+        setQuickStatus(msg);
+        await presentLocalMessageNotification({
+          title: "Send failed",
+          body: msg.slice(0, 120),
+          data: { type: "error" },
+        });
+      } finally {
+        setQuickBusy(null);
+      }
+    },
+    [
+      quickBusy,
+      settings.quickMessages,
+      user?.mapCenter,
+      user?.map_center,
+      selfBroadcastName,
+      ownerId,
+      applyGeoPropagationToInbox,
+      composeZoneId,
+      refresh,
+      confirmEmergencySend,
+    ],
+  );
+
+  const closeSheets = useCallback(() => {
+    setActionsSheetOpen(false);
+    setComposeOpen(false);
+    setImagePickerOpen(false);
+  }, []);
+
+  const openCompose = useCallback((type: MessageType) => {
+    setComposeType(type);
+    setDraft("");
+    setComposeImages([]);
+    setComposeServicePaFields({ subject: "", topic: "", subtopic: "" });
+    setComposeStatus("");
+    setActionsSheetOpen(false);
+    setComposeOpen(true);
+  }, []);
+
+  const onSend = useCallback(async () => {
+    if (sending) return;
+    const text = draft.trim();
+    const hasImages = composeImages.length > 0;
+    const servicePaValidation = validateServicePaCompose(
+      composeType,
+      composeServicePaFields,
+      text,
+      { allowEmptyBody: hasImages },
+    );
+    if (servicePaValidation) {
+      setComposeStatus(servicePaValidation);
+      return;
+    }
+    if (!text && !hasImages && !isServicePaMessageType(composeType)) return;
+
+    if (!(await confirmEmergencySend(composeType))) return;
+
+    const accessGuest = isAccessGuestChannelType(composeType);
+    if (accessGuest && !composeReceiverId.trim()) {
+      setComposeStatus("Select a guest for Access CHAT.");
+      return;
+    }
+    if (
+      !accessGuest &&
+      isPrivateMessageType(composeType) &&
+      !composeReceiverId
+    ) {
+      setComposeStatus("Select a receiver for private messages.");
+      return;
+    }
+
+    const parsedReceiverId = Number(composeReceiverId);
+    if (
+      !accessGuest &&
+      isPrivateMessageType(composeType) &&
+      (!Number.isFinite(parsedReceiverId) || parsedReceiverId <= 0)
+    ) {
+      setComposeStatus("Receiver must be a valid member id.");
+      return;
+    }
+
+    if (accessGuest && !composeZoneId) {
+      setComposeStatus(
+        "Your account has no network id; cannot message guests.",
+      );
+      return;
+    }
+
+    setSending(true);
+    setComposeStatus(hasImages ? "Uploading photos…" : "Sending…");
+    try {
+      let imageUrls: string[] = [];
+      if (hasImages) {
+        for (let i = 0; i < composeImages.length; i += 1) {
+          setComposeStatus(`Uploading photo ${i + 1} of ${composeImages.length}…`);
+          const uploaded = await uploadMessageImage(composeImages[i]);
+          const url = uploaded.data?.url?.trim();
+          // Older APIs have no /me/media; still attach the picker data URL.
+          imageUrls.push(url || composeImages[i]);
+        }
+      }
+      const imageExtras = imageUrls.length ? { images: imageUrls } : {};
+      setComposeStatus("Sending…");
+
+      if (usesGeoPropagationMessageType(composeType)) {
+        const resolved = await resolveMessagePropagationPositionForType(
+          composeType,
+          user?.mapCenter ?? user?.map_center ?? null,
+        );
+        if ("error" in resolved) throw new Error(resolved.error);
+        const hid = await getOrCreateDeviceHid();
+        const result = await propagateMessageFeatureMessage({
+          type: composeType,
+          hid,
+          msg: isServicePaMessageType(composeType)
+            ? buildServicePaMsgPayload(composeServicePaFields, text, {
+                broadcast_name: selfBroadcastName,
+                ...imageExtras,
+              })
+            : { description: text, broadcast_name: selfBroadcastName, ...imageExtras },
+          position: resolved.position,
+          ...(isPrivateMessageType(composeType)
+            ? { receiver_owner_id: parsedReceiverId }
+            : {}),
+        });
+        if (result.error) throw new Error(result.error);
+        const body = result.data;
+        if (body && !body.skipped && ownerId != null) {
+          applyGeoPropagationToInbox({
+            ...body,
+            sender_id: body.sender_id ?? ownerId,
+            zone_id:
+              body.zone_id ?? body.zone_ids?.[0] ?? composeZoneId ?? undefined,
+          });
+        }
+        setDraft("");
+        setComposeImages([]);
+        setComposeServicePaFields({ subject: "", topic: "", subtopic: "" });
+        setComposeOpen(false);
+        setComposeStatus(
+          `Sent · ${messagePositionSourceLabel(resolved.source)}`,
+        );
+        void refresh();
+        return;
+      }
+
+      const result = await sendMessage({
+        message: text || (imageUrls.length ? " " : text),
+        type: composeType,
+        broadcast_name: selfBroadcastName,
+        ...(imageUrls.length ? { images: imageUrls } : {}),
+        ...(composeZoneId ? { zone_id: composeZoneId } : {}),
+        ...(accessGuest && composeReceiverId.trim()
+          ? { guest_id: composeReceiverId.trim() }
+          : {}),
+        ...(!accessGuest && isPrivateMessageType(composeType)
+          ? { receiver_id: parsedReceiverId }
+          : {}),
+      });
+      if (result.error) throw new Error(result.error);
+      setDraft("");
+      setComposeImages([]);
+      setComposeOpen(false);
+      setComposeStatus("Sent");
+      void refresh();
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Could not send your message.";
+      setComposeStatus(msg);
+      await presentLocalMessageNotification({
+        title: "Send failed",
+        body: msg.slice(0, 120),
+        data: { type: "error" },
+      });
+    } finally {
+      setSending(false);
+    }
+  }, [
+    draft,
+    composeImages,
+    composeType,
+    composeReceiverId,
+    composeZoneId,
+    refresh,
+    user?.mapCenter,
+    user?.map_center,
+    selfBroadcastName,
+    applyGeoPropagationToInbox,
+    ownerId,
+    composeServicePaFields,
+    confirmEmergencySend,
+    sending,
+  ]);
+
+  const renderQuickActions = () => (
+    <View style={{ gap: 12 }}>
+      <View style={{ gap: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <BellRing size={18} color={colors.danger} />
+          <Text style={{ color: colors.text, fontWeight: "800", fontSize: 14 }}>
+            Quick alerts
+          </Text>
+        </View>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+          {ALARM_ACTIONS.map((action) => (
+            <QuickActionButton
+              key={action.type}
+              action={action}
+              disabled={!!quickBusy}
+              sending={quickBusy === action.type}
+              onPress={() => void sendQuickAlert(action.type)}
             />
-            <Text
-              style={{ color: colors.text, fontSize: 13, fontWeight: "700" }}
-            >
-              {sectionTitle}
-            </Text>
+          ))}
+        </View>
+      </View>
+      <View style={{ gap: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Megaphone size={18} color={colors.warning} />
+          <Text style={{ color: colors.text, fontWeight: "800", fontSize: 14 }}>
+            Messaging
+          </Text>
+        </View>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+          {visibleMessagingActions.map((action) => (
+            <QuickActionButton
+              key={action.type}
+              action={action}
+              disabled={false}
+              sending={false}
+              onPress={() => openCompose(action.type as MessageType)}
+            />
+          ))}
+        </View>
+        {quickStatus ? (
+          <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+            {quickStatus}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+
+  return (
+    <GradientBackground>
+      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+        <AppHeader title="Home" subtitle={realtimeHint} />
+
+        {loading && messages.length === 0 ? (
+          <View
+            style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
+          >
+            <ActivityIndicator color={colors.accent} />
+          </View>
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <MessageRow
+                item={item}
+                selfOwnerId={ownerId}
+                selfBroadcastName={selfBroadcastName}
+                selfRealName={selfRealName}
+                selfEmail={user?.email}
+                selfAvatarUrl={user?.avatar_url}
+                ownerNames={ownerNames}
+                ownerAvatars={ownerAvatars}
+                senderOnline={
+                  typeof item.sender_id === "number" && item.sender_id > 0
+                    ? isOnline(item.sender_id)
+                    : false
+                }
+                zoneNames={zoneNames}
+                highlighted={highlightMessageId === item.id}
+              />
+            )}
+            contentContainerStyle={{
+              paddingHorizontal: 20,
+              paddingBottom: 130,
+            }}
+            ListHeaderComponent={
+              <View>
+                <MessageInboxFilterBar
+                  search={search}
+                  onSearchChange={setSearch}
+                  zoneFilter={zoneFilter}
+                  onZoneFilterChange={setZoneFilter}
+                  zoneIds={allZoneIds}
+                  zoneNames={zoneNames}
+                  typeFilter={typeFilter}
+                  onTypeFilterChange={setTypeFilter}
+                  typeOptions={inboxTypeOptions}
+                  searchPlaceholder="Search messages…"
+                  dateFrom={dateFrom}
+                  onDateFromChange={setDateFrom}
+                  dateTo={dateTo}
+                  onDateToChange={setDateTo}
+                />
+                {error ? (
+                  <Text style={{ color: colors.danger, marginBottom: 8 }}>
+                    {error}
+                  </Text>
+                ) : null}
+              </View>
+            }
+            refreshControl={
+              <RefreshControl
+                refreshing={loading}
+                onRefresh={() => void refresh()}
+                tintColor={colors.accent}
+              />
+            }
+            ListEmptyComponent={
+              <Card>
+                <Text style={{ color: colors.textMuted, textAlign: "center" }}>
+                  No messages yet. Tap + to send a quick alert or compose a
+                  message.
+                </Text>
+              </Card>
+            }
+          />
+        )}
+
+        <BottomSheet
+          visible={actionsSheetOpen || composeOpen}
+          onClose={closeSheets}
+          maxHeight={composeOpen ? "88%" : "82%"}
+        >
+          {composeOpen ? (
             <View
               style={{
-                marginLeft: 8,
-                paddingHorizontal: 8,
-                paddingVertical: 3,
-                borderRadius: 999,
-                backgroundColor: colors.bgSurface,
-                borderWidth: 1,
-                borderColor:
-                  builder.capabilities?.can_create_zone === false
-                    ? colors.danger
-                    : colors.border,
+                padding: 24,
+                gap: 12,
+                paddingBottom: Math.max(bottomInset, 16) + 12,
               }}
             >
+              <View style={{ alignItems: "center", paddingBottom: 10 }}>
+                <View
+                  style={{
+                    width: 40,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: colors.borderStrong,
+                  }}
+                />
+              </View>
               <Text
                 style={{
-                  color:
-                    builder.capabilities?.can_create_zone === false
-                      ? colors.danger
-                      : colors.textMuted,
-                  fontSize: 11,
+                  color: colors.text,
+                  fontSize: 18,
                   fontWeight: "700",
                 }}
               >
-                {builder.loadingList
-                  ? "…"
-                  : builder.capabilities?.max_total != null &&
-                      typeof builder.capabilities.remaining_total === "number"
-                    ? `${builder.capabilities.max_total - builder.capabilities.remaining_total}/${builder.capabilities.max_total}`
-                    : builder.capabilities?.max_total != null
-                      ? `${builder.layers.length}/${builder.capabilities.max_total}`
-                      : `${builder.layers.length} saved`}
+                Compose message
               </Text>
-            </View>
-          </View>
-          <AlertBellButton />
-        </View>
-        <View style={{ marginHorizontal: 14, marginTop: 10 }}>
-          <RecentServicesSection zoneId={ownerZoneId || undefined} />
-        </View>
-      </SafeAreaView>
+              <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                Sending as {selfBroadcastName}
+              </Text>
 
-      {/* Bottom sheet — tap handle to hide / show */}
-      <SafeAreaView
-        edges={["bottom"]}
-        style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-        pointerEvents="box-none"
-      >
-        {panelOpen ? (
-          <View
-            style={{
-              marginHorizontal: 10,
-              marginBottom: 8,
-              borderRadius: 22,
-              backgroundColor: "rgba(255,255,255,0.97)",
-              borderWidth: 1,
-              borderColor: colors.border,
-              maxHeight: 440,
-              overflow: "hidden",
-            }}
-          >
-            <Pressable
-              onPress={() => setPanelOpen(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Hide zone panel"
-              {...dragResponder.panHandlers}
-              style={{
-                paddingTop: 10,
-                paddingBottom: 8,
-                paddingHorizontal: 14,
-                alignItems: "center",
-              }}
-            >
-              <View
-                style={{
-                  width: 48,
-                  height: 5,
-                  borderRadius: 3,
-                  backgroundColor: colors.borderStrong,
-                  marginBottom: 8,
-                }}
-              />
-            </Pressable>
-
-            <View style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
-              <ZoneTypePicker
-                value={builder.zoneType}
-                onChange={builder.changeZoneType}
-              />
-            </View>
-
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ padding: 14, gap: 14 }}
-              bounces={false}
-            >
-            <View>
-              <Input
-                label="Zone name"
-                placeholder="e.g. Building perimeter"
-                value={builder.zoneName}
-                onChangeText={(v) =>
-                  builder.setZoneName(v.slice(0, MAX_ZONE_NAME_LENGTH))
-                }
-                maxLength={MAX_ZONE_NAME_LENGTH}
-              />
-              <Text
-                style={{
-                  marginTop: 6,
-                  fontSize: 10,
-                  color: colors.textDim,
-                  letterSpacing: 0.4,
-                  textAlign: "right",
-                }}
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+                style={{ maxHeight: 460 }}
+                contentContainerStyle={{ paddingBottom: 8 }}
               >
-                {builder.zoneName.length}/{MAX_ZONE_NAME_LENGTH}
-              </Text>
-            </View>
-
-            <Input
-              label="Description (optional)"
-              placeholder="Notes about this zone"
-              value={builder.zoneDescription}
-              onChangeText={builder.setZoneDescription}
-              multiline
-            />
-
-            {builder.capabilities?.can_create_zone === false ? (
-              <View
-                style={{
-                  padding: 12,
-                  borderRadius: 12,
-                  backgroundColor: "rgba(255,82,82,0.08)",
-                  borderWidth: 1,
-                  borderColor: "rgba(255,82,82,0.4)",
-                }}
-              >
-                <Text style={{ color: colors.danger, fontSize: 12, lineHeight: 18 }}>
-                  {builder.capabilities.reason ??
-                    "You've reached the zone limit for this user. Delete a zone to free a slot."}
-                </Text>
-              </View>
-            ) : null}
-
-            <ZoneTypePanel builder={builder} />
-
-            {builder.listError ? (
-              <Text style={{ color: colors.danger, fontSize: 12 }}>
-                {builder.listError}
-              </Text>
-            ) : null}
-
-            {builder.loadingList && builder.layers.length === 0 ? (
-              <ActivityIndicator color={colors.accent} />
-            ) : null}
-
-            {builder.layers.length > 0 ? (
-              <View style={{ gap: 8 }}>
                 <Text
                   style={{
                     color: colors.textMuted,
-                    fontSize: 10,
-                    fontWeight: "800",
-                    letterSpacing: 1.6,
+                    fontSize: 11,
+                    fontWeight: "600",
+                    letterSpacing: 1.5,
                     textTransform: "uppercase",
                   }}
                 >
-                  Saved zones ({builder.layers.length})
+                  Message type
                 </Text>
-                <Text style={{ color: colors.textDim, fontSize: 11, lineHeight: 16 }}>
-                  Tap the red trash icon to delete a saved zone.
-                </Text>
-              {builder.layers.map((layer) => {
-                  const summary = summarizeZone(layer.raw);
-                  return (
-                    <View
-                      key={layer.id}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginTop: 8, marginBottom: 8 }}
+                >
+                  {composeTypeOptions.flatMap((group) =>
+                    group.options.map((opt) => (
+                      <Pressable
+                        key={opt.type}
+                        onPress={() => {
+                          setComposeType(opt.type);
+                          setComposeServicePaFields({
+                            subject: "",
+                            topic: "",
+                            subtopic: "",
+                          });
+                        }}
+                        style={{ marginRight: 8 }}
+                      >
+                        <Chip
+                          label={opt.label}
+                          active={composeType === opt.type}
+                        />
+                      </Pressable>
+                    )),
+                  )}
+                </ScrollView>
+
+                {isAccessGuestChannelType(composeType) ? (
+                  <View style={{ marginTop: 12, gap: 8 }}>
+                    <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                      Guest (zone {composeZoneId ?? "—"})
+                    </Text>
+                    {loadingComposeMeta ? (
+                      <ActivityIndicator color={colors.accent} />
+                    ) : guestOptions.length === 0 ? (
+                      <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                        No active guest requests in this zone.
+                      </Text>
+                    ) : (
+                      guestOptions.map((g) => (
+                        <Pressable
+                          key={g.id}
+                          onPress={() => setComposeReceiverId(g.id)}
+                        >
+                          <Chip
+                            label={g.label}
+                            active={composeReceiverId === g.id}
+                            style={{ marginBottom: 6 }}
+                          />
+                        </Pressable>
+                      ))
+                    )}
+                  </View>
+                ) : null}
+
+                {!isAccessGuestChannelType(composeType) &&
+                isPrivateMessageType(composeType) ? (
+                  <View style={{ marginTop: 12, gap: 8 }}>
+                    {privateSearchLoading && privateLocationStatus === null ? (
+                      <ActivityIndicator color={colors.accent} />
+                    ) : privateLocationStatusMessage(privateLocationStatus) ? (
+                      <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                        {privateLocationStatusMessage(privateLocationStatus)}
+                      </Text>
+                    ) : (
+                      <>
+                        <TextInput
+                          placeholder="Name or email"
+                          placeholderTextColor={colors.textDim}
+                          value={privateSearchQuery}
+                          onChangeText={(text) => {
+                            setPrivateSearchQuery(text);
+                            setComposeReceiverId("");
+                          }}
+                          style={{
+                            backgroundColor: colors.bgCard,
+                            borderWidth: 1,
+                            borderColor: colors.border,
+                            borderRadius: 12,
+                            padding: 12,
+                            color: colors.text,
+                            fontSize: 15,
+                          }}
+                        />
+                        {privateSearchLoading ? (
+                          <ActivityIndicator color={colors.accent} />
+                        ) : null}
+                        {privateSearchResults.map((m) => (
+                          <Pressable
+                            key={m.id}
+                            onPress={() => {
+                              setComposeReceiverId(String(m.id));
+                              setPrivateSearchQuery(m.display_name);
+                            }}
+                          >
+                            <Chip
+                              label={`${m.display_name} — ${m.subtitle || m.email}`}
+                              active={composeReceiverId === String(m.id)}
+                              style={{ marginBottom: 6 }}
+                            />
+                          </Pressable>
+                        ))}
+                        {privateSearchQuery.trim().length >= 2 &&
+                        !privateSearchLoading &&
+                        privateSearchResults.length === 0 ? (
+                          <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                            No members matched.
+                          </Text>
+                        ) : null}
+                      </>
+                    )}
+                  </View>
+                ) : null}
+
+                {isServicePaMessageType(composeType) ? (
+                  <View style={{ marginTop: 12, gap: 10 }}>
+                    <Text
                       style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: 12,
-                        borderRadius: 12,
+                        color: colors.text,
+                        fontWeight: "700",
+                        fontSize: 12,
+                      }}
+                    >
+                      {composeType === "SERVICE"
+                        ? "Service listing"
+                        : "Public announcement"}
+                    </Text>
+                    <TextInput
+                      placeholder="Subject"
+                      placeholderTextColor={colors.textDim}
+                      value={composeServicePaFields.subject}
+                      onChangeText={(subject) =>
+                        setComposeServicePaFields((prev) => ({
+                          ...prev,
+                          subject,
+                        }))
+                      }
+                      maxLength={200}
+                      style={{
                         backgroundColor: colors.bgCard,
                         borderWidth: 1,
                         borderColor: colors.border,
+                        borderRadius: 12,
+                        padding: 12,
+                        color: colors.text,
+                        fontSize: 15,
                       }}
-                    >
-                      <View
-                        style={{
-                          width: 10,
-                          height: 10,
-                          borderRadius: 2,
-                          backgroundColor: layer.color,
-                        }}
-                      />
-                      <Pressable
-                        style={{ flex: 1 }}
-                        onPress={() => {
-                          const target =
-                            layer.rings[0]?.[0] ??
-                            layer.circles[0]?.center ??
-                            layer.marker ??
-                            builder.mapCenter;
-                          builder.setMapCenter(target);
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: colors.text,
-                            fontSize: 13,
-                            fontWeight: "700",
-                          }}
-                          numberOfLines={1}
-                        >
-                          {layer.name}
+                    />
+                    {composeType === "SERVICE" ? (
+                      <>
+                        <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                          Topic
                         </Text>
-                        <Text
-                          style={{
-                            color: colors.textDim,
-                            fontSize: 11,
-                            marginTop: 2,
-                          }}
-                          numberOfLines={1}
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
                         >
-                          {summary || layer.zoneType.replace("_", " ")}
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => builder.remove(layer)}
-                        disabled={!builder.canDeleteLayer(layer)}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Delete zone ${layer.name}`}
-                        style={{
-                          padding: 8,
-                          borderRadius: 10,
-                          backgroundColor: builder.canDeleteLayer(layer)
-                            ? "rgba(255,82,82,0.1)"
-                            : "rgba(148,163,184,0.12)",
-                          opacity: builder.canDeleteLayer(layer) ? 1 : 0.45,
-                        }}
-                      >
-                        <Trash2
-                          size={14}
-                          color={
-                            builder.canDeleteLayer(layer)
-                              ? colors.danger
-                              : colors.textDim
-                          }
-                        />
-                      </Pressable>
-                    </View>
-                  );
-                })}
-                </View>
-              ) : null}
+                          {SERVICE_PA_TOPICS.map((topic) => (
+                            <Pressable
+                              key={topic.id}
+                              onPress={() =>
+                                setComposeServicePaFields((prev) => ({
+                                  ...prev,
+                                  topic: topic.id,
+                                  subtopic: "",
+                                }))
+                              }
+                              style={{ marginRight: 8 }}
+                            >
+                              <Chip
+                                label={topic.label}
+                                active={
+                                  composeServicePaFields.topic === topic.id
+                                }
+                              />
+                            </Pressable>
+                          ))}
+                        </ScrollView>
+                        {serviceTopicRequiresSubtopic(
+                          composeType,
+                          composeServicePaFields.topic,
+                        ) ? (
+                          <>
+                            <Text
+                              style={{ color: colors.textMuted, fontSize: 12 }}
+                            >
+                              Products subtopic
+                            </Text>
+                            <ScrollView
+                              horizontal
+                              showsHorizontalScrollIndicator={false}
+                            >
+                              {(
+                                getTopicOption(composeServicePaFields.topic)
+                                  ?.subtopics ?? []
+                              ).map((subtopic) => (
+                                <Pressable
+                                  key={subtopic.id}
+                                  onPress={() =>
+                                    setComposeServicePaFields((prev) => ({
+                                      ...prev,
+                                      subtopic: subtopic.id,
+                                    }))
+                                  }
+                                  style={{ marginRight: 8 }}
+                                >
+                                  <Chip
+                                    label={subtopic.label}
+                                    active={
+                                      composeServicePaFields.subtopic ===
+                                      subtopic.id
+                                    }
+                                  />
+                                </Pressable>
+                              ))}
+                            </ScrollView>
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </View>
+                ) : null}
 
-              {builder.error ? (
-                <Text style={{ color: colors.danger, fontSize: 12 }}>
-                  {builder.error}
-                </Text>
-              ) : null}
-              {builder.status ? (
-                <Text style={{ color: colors.accent, fontSize: 12 }}>
-                  {builder.status}
-                </Text>
-              ) : null}
+                <TextInput
+                  placeholder={
+                    isServicePaMessageType(composeType)
+                      ? "Message body…"
+                      : "Type your message…"
+                  }
+                  placeholderTextColor={colors.textDim}
+                  value={draft}
+                  onChangeText={setDraft}
+                  multiline
+                  style={{
+                    marginTop: 16,
+                    minHeight: 100,
+                    backgroundColor: colors.bgCard,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 14,
+                    padding: 14,
+                    color: colors.text,
+                    fontSize: 15,
+                    textAlignVertical: "top",
+                  }}
+                />
 
-              <Button
-                label={builder.saving ? "Saving…" : "Save zone"}
-                onPress={() => void builder.save()}
-                loading={builder.saving}
-                disabled={!builder.canSave}
-                fullWidth
-                size="lg"
-                leftIcon={<Save size={18} color="#fff" />}
-              />
-            </ScrollView>
-          </View>
-        ) : (
-          <Pressable
-            onPress={() => setPanelOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Show zone panel"
-            style={{
-              alignSelf: "center",
-              marginBottom: 12,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              paddingHorizontal: 18,
-              paddingVertical: 12,
-              borderRadius: 999,
-              backgroundColor: "rgba(255,255,255,0.95)",
-              borderWidth: 1,
-              borderColor: colors.border,
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.35,
-              shadowRadius: 12,
-              elevation: 8,
-            }}
-          >
+                {composeImages.length ? (
+                  <MessageImageGallery
+                    uris={composeImages}
+                    compact
+                    onRemove={(index) =>
+                      setComposeImages((prev) =>
+                        prev.filter((_, i) => i !== index),
+                      )
+                    }
+                  />
+                ) : null}
+
+                <Pressable
+                  onPress={() => {
+                    if (sending) return;
+                    if (composeImages.length >= MAX_MESSAGE_IMAGES) {
+                      setComposeStatus("You can attach up to 5 photos.");
+                      return;
+                    }
+                    setImagePickerOpen(true);
+                  }}
+                  disabled={sending}
+                  style={{
+                    marginTop: 12,
+                    alignSelf: "flex-start",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    backgroundColor: colors.bgCard,
+                    borderRadius: 12,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                  }}
+                >
+                  <ImagePlus size={16} color={colors.accent} />
+                  <Text
+                    style={{
+                      color: colors.accent,
+                      fontSize: 13,
+                      fontWeight: "700",
+                    }}
+                  >
+                    {composeImages.length
+                      ? `Add photo (${composeImages.length}/5)`
+                      : "Add photos"}
+                  </Text>
+                </Pressable>
+
+                {composeStatus ? (
+                  <Text
+                    style={{
+                      color:
+                        composeStatus.startsWith("Sending") ||
+                        composeStatus.startsWith("Uploading")
+                          ? colors.textMuted
+                          : colors.danger,
+                      fontSize: 12,
+                      marginTop: 8,
+                    }}
+                  >
+                    {composeStatus}
+                  </Text>
+                ) : null}
+              </ScrollView>
+
+              <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  onPress={closeSheets}
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  label="Send"
+                  onPress={() => void onSend()}
+                  loading={sending}
+                  leftIcon={<Send size={16} color="#fff" />}
+                  style={{ flex: 1 }}
+                  disabled={ownerId == null}
+                />
+              </View>
+            </View>
+          ) : (
             <View
               style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: colorForZoneType(builder.zoneType),
+                paddingHorizontal: 20,
+                paddingTop: 12,
+                paddingBottom: Math.max(bottomInset, 16) + 12,
               }}
-            />
-            <Text
-              style={{ color: colors.text, fontSize: 13, fontWeight: "700" }}
             >
-              Zone tools
-              {builder.layers.length > 0
-                ? ` · ${builder.layers.length} saved`
-                : ""}
-            </Text>
-            <ChevronUp size={16} color={colors.accent} />
-          </Pressable>
-        )}
+              <View style={{ alignItems: "center", paddingBottom: 10 }}>
+                <View
+                  style={{
+                    width: 40,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: colors.borderStrong,
+                  }}
+                />
+              </View>
+              <Text
+                style={{
+                  color: colors.text,
+                  fontSize: 18,
+                  fontWeight: "700",
+                  marginBottom: 14,
+                }}
+              >
+                New message
+              </Text>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                {renderQuickActions()}
+              </ScrollView>
+            </View>
+          )}
+        </BottomSheet>
+        <AvatarUploadModal
+          visible={imagePickerOpen}
+          skipCrop
+          maxSelection={Math.max(1, MAX_MESSAGE_IMAGES - composeImages.length)}
+          chooserTitle="Add photos"
+          chooserLead="Take a photo, or pick several from gallery (up to 5 per message)."
+          onClose={() => setImagePickerOpen(false)}
+          onImageSelected={(dataUrl) => {
+            setComposeImages((prev) =>
+              prev.length >= MAX_MESSAGE_IMAGES ? prev : [...prev, dataUrl],
+            );
+            setImagePickerOpen(false);
+            setComposeStatus("");
+          }}
+          onImagesSelected={(dataUrls) => {
+            setComposeImages((prev) =>
+              [...prev, ...dataUrls].slice(0, MAX_MESSAGE_IMAGES),
+            );
+            setImagePickerOpen(false);
+            setComposeStatus("");
+          }}
+          onError={(message) => setComposeStatus(message)}
+        />
       </SafeAreaView>
-    </View>
+    </GradientBackground>
   );
 }

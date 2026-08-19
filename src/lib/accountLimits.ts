@@ -82,6 +82,14 @@ export function canEditNetworkId(params: {
 export const MEMBER_INVITE_UNAVAILABLE_HINT =
   "Member invite QR is available to administrators on Private, Private+, Exclusive, and Enhanced+ accounts. Enhanced accounts are solo and cannot invite members.";
 
+/** Geo types network-shared on Private+ (family) accounts. */
+export const PRIVATE_PLUS_NETWORK_SHARED_MESSAGE_TYPES = [
+  "PANIC",
+  "NS_PANIC",
+  "PA",
+  "SERVICE",
+] as const;
+
 export function accountTypeLabel(type: NormalizedAccountType): string {
   switch (type) {
     case "PRIVATE_PLUS":
@@ -109,18 +117,32 @@ export const ADMIN_ASSIGNABLE_ACCOUNT_TYPES: {
   { value: "ENHANCED_PLUS", apiValue: "enhanced_plus", label: "Enhanced+" },
 ];
 
+/** Tiers a non–system-admin account owner may assign to themselves. */
+export const OWNER_SELF_ASSIGNABLE_ACCOUNT_TYPES =
+  ADMIN_ASSIGNABLE_ACCOUNT_TYPES.filter((option) => option.value !== "PRIVATE");
+
+export function toApiAccountType(type: NormalizedAccountType): string {
+  const match = ADMIN_ASSIGNABLE_ACCOUNT_TYPES.find((o) => o.value === type);
+  return match?.apiValue ?? type.toLowerCase();
+}
+
+export function canEditOwnAccountType(params: {
+  role?: string | null;
+}): boolean {
+  return String(params.role ?? "").toLowerCase() === "administrator";
+}
 export function deviceLimitDescription(type: NormalizedAccountType): string {
   switch (type) {
     case "PRIVATE":
-      return "Private accounts allow 1 registered device per user. You can switch devices from the login screen or Devices settings.";
+      return "Private accounts allow 1 smart-home hub. Phones and browsers register separately as login sessions and do not use that slot.";
     case "PRIVATE_PLUS":
-      return "Private+ accounts allow up to 10 registered devices per user. Only one device can be active at a time.";
+      return "Private+ accounts allow up to 10 smart-home hubs. Phones/browsers are separate login sessions; only one phone/web session can be active at a time.";
     case "EXCLUSIVE":
-      return "Exclusive accounts allow 1 active device per user at a time. Use \"Use this device instead\" on login to switch phones.";
+      return "Exclusive accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones (the other login device is removed).";
     case "ENHANCED":
-      return "Enhanced accounts allow 1 active device per user at a time. Use \"Use this device instead\" on login to switch phones.";
+      return "Enhanced accounts allow 1 smart-home hub. Use \"Use this device instead\" on login to switch phones (the other login device is removed).";
     case "ENHANCED_PLUS":
-      return "Enhanced+ accounts have no device cap, but only one session can be active at a time.";
+      return "Enhanced+ accounts have no smart-home hub cap. Only one phone/web session can be active at a time; takeover removes the other login device.";
   }
 }
 
