@@ -22,6 +22,7 @@
           "remote-notification"
         ],
         "NSCameraUsageDescription": "Safe Zone Patrol uses your camera to scan QR codes for zone access and member invites.",
+        "NSPhotoLibraryUsageDescription": "Safe Zone Patrol uses your photo library so you can attach images to messages and update your profile photo.",
         "NSLocationWhenInUseUsageDescription": "Safe Zone Patrol uses your location to anchor proximity-source zones to where you are right now.",
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -67,6 +68,13 @@
         "expo-camera",
         {
           "cameraPermission": "Allow Safe Zone Patrol to access your camera to scan QR codes."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Safe Zone Patrol uses your photo library so you can attach images to messages and update your profile photo.",
+          "cameraPermission": "Safe Zone Patrol uses your camera to take photos for messages and your profile."
         }
       ],
       "expo-secure-store",

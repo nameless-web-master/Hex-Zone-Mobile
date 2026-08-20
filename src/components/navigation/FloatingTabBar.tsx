@@ -148,7 +148,7 @@ export function FloatingTabBar({
         </View>
       </View>
 
-      {/* Same baseline, pinned to the right */}
+      {/* Floated above the nav pill so it does not sit on the same baseline */}
       {user ? (
         <Pressable
           onPress={openCompose}
@@ -157,7 +157,8 @@ export function FloatingTabBar({
           style={{
             position: "absolute",
             right: 16,
-            bottom: Math.max(bottomInset, 8) + 6,
+            bottom:
+              Math.max(bottomInset, 8) + 6 + FLOATING_TAB_BAR_HEIGHT + 12,
             width: 52,
             height: 52,
             borderRadius: 26,

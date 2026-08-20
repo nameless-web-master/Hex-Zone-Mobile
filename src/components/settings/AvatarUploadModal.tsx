@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  InteractionManager,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -9,14 +11,27 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { colors } from "@/theme/colors";
 
+/** Wait for an iOS modal / picker presentation to finish dismissing. */
+function waitForPresentationSettle(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 type Mode = "chooser" | "camera" | "gallery" | "crop";
 
-function buildGalleryHtml(options: { multiple: boolean; maxCount: number }) {
+function buildGalleryHtml(options: {
+  multiple: boolean;
+  maxCount: number;
+  /** Chat photos: always stream compressed items (avoids iOS freeze on 1 image). */
+  streamResults: boolean;
+}) {
   const multiple = options.multiple;
   const maxCount = Math.max(1, Math.min(5, Math.floor(options.maxCount)));
+  const streamResults = options.streamResults;
   const multipleAttr = multiple ? " multiple" : "";
   const lead = multiple
     ? `Select up to ${maxCount} photos at once.`
@@ -76,6 +91,7 @@ function buildGalleryHtml(options: { multiple: boolean; maxCount: number }) {
   <script>
     (function () {
       var multiple = ${multiple ? "true" : "false"};
+      var streamResults = ${streamResults ? "true" : "false"};
       var maxCount = ${maxCount};
       var input = document.getElementById('file');
       var button = document.getElementById('pick');
@@ -86,11 +102,108 @@ function buildGalleryHtml(options: { multiple: boolean; maxCount: number }) {
         }
       }
       function setStatus(text) { status.textContent = text || ''; }
+      function isImageFile(file) {
+        var type = String(file && file.type || '').toLowerCase();
+        if (type.indexOf('image/') === 0) return true;
+        var name = String(file && file.name || '').toLowerCase();
+        return /\\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/.test(name);
+      }
+      function drawJpeg(source, done) {
+        try {
+          var maxEdge = streamResults ? 720 : 960;
+          var quality = streamResults ? 0.55 : 0.62;
+          var w = source.naturalWidth || source.width || 0;
+          var h = source.naturalHeight || source.height || 0;
+          if (!w || !h) { done(''); return; }
+          var scale = Math.min(1, maxEdge / Math.max(w, h));
+          var cw = Math.max(1, Math.round(w * scale));
+          var ch = Math.max(1, Math.round(h * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = cw;
+          canvas.height = ch;
+          var ctx = canvas.getContext('2d');
+          if (!ctx) { done(''); return; }
+          ctx.drawImage(source, 0, 0, cw, ch);
+          var dataUrl = canvas.toDataURL('image/jpeg', quality);
+          canvas.width = 1;
+          canvas.height = 1;
+          done(dataUrl);
+        } catch (e) {
+          done('');
+        }
+      }
+      function compressFile(file, done) {
+        var finished = false;
+        function finish(dataUrl) {
+          if (finished) return;
+          finished = true;
+          done(dataUrl);
+        }
+        function fromElement(el) {
+          requestAnimationFrame(function () { drawJpeg(el, finish); });
+        }
+        function drawFromBitmap(bitmap) {
+          requestAnimationFrame(function () {
+            drawJpeg(bitmap, function (dataUrl) {
+              try { bitmap.close && bitmap.close(); } catch (e) {}
+              finish(dataUrl);
+            });
+          });
+        }
+        if (typeof createImageBitmap === 'function') {
+          // Decode-time resize is critical for a single iPhone photo (HEIC).
+          // Falling back to a full-resolution decode freezes WKWebView.
+          if (streamResults) {
+            createImageBitmap(file, {
+              resizeWidth: 720,
+              resizeHeight: 720,
+              resizeQuality: 'medium'
+            }).then(drawFromBitmap).catch(function () {
+              // Older WebViews may reject resize opts — try plain decode
+              // only for small files; otherwise fail soft.
+              if (file.size && file.size > 2 * 1024 * 1024) {
+                finish('');
+                return;
+              }
+              createImageBitmap(file).then(drawFromBitmap).catch(function () {
+                loadViaObjectUrl(file, fromElement, finish);
+              });
+            });
+            return;
+          }
+          createImageBitmap(file).then(drawFromBitmap).catch(function () {
+            loadViaObjectUrl(file, fromElement, finish);
+          });
+          return;
+        }
+        loadViaObjectUrl(file, fromElement, finish);
+      }
+      function loadViaObjectUrl(file, onReady, fail) {
+        var img = new Image();
+        var objectUrl = '';
+        img.onload = function () {
+          requestAnimationFrame(function () {
+            onReady(img);
+            try { if (objectUrl) URL.revokeObjectURL(objectUrl); } catch (e) {}
+          });
+        };
+        img.onerror = function () {
+          try { if (objectUrl) URL.revokeObjectURL(objectUrl); } catch (e) {}
+          // Never FileReader-decode large originals on iOS — that freezes WKWebView.
+          fail('');
+        };
+        try {
+          objectUrl = URL.createObjectURL(file);
+          img.src = objectUrl;
+        } catch (e) {
+          fail('');
+        }
+      }
       function readFiles(list) {
         var files = [];
         for (var i = 0; i < (list ? list.length : 0); i++) {
           var f = list[i];
-          if (f && String(f.type || '').startsWith('image/')) files.push(f);
+          if (f && isImageFile(f)) files.push(f);
         }
         if (!files.length) {
           post({ type: 'error', message: 'Please choose image files.' });
@@ -99,44 +212,45 @@ function buildGalleryHtml(options: { multiple: boolean; maxCount: number }) {
         if (files.length > maxCount) files = files.slice(0, maxCount);
         button.disabled = true;
         setStatus(files.length > 1 ? ('Preparing ' + files.length + ' photos…') : 'Preparing image…');
+        post({ type: 'preparing', total: files.length });
         var results = [];
         var idx = 0;
-        function next() {
-          if (idx >= files.length) {
-            button.disabled = false;
-            setStatus('');
-            if (multiple) {
-              for (var p = 0; p < results.length; p++) {
-                post({ type: 'image_item', dataUrl: results[p], index: p, total: results.length });
-              }
-              post({ type: 'images_done', total: results.length });
-            } else post({
+        function finishAll() {
+          button.disabled = false;
+          setStatus('');
+          if (!results.length) {
+            post({ type: 'error', message: 'Could not prepare those photos on this device. Try a smaller photo.' });
+            return;
+          }
+          // Chat: one final message with already-compressed JPEGs.
+          // Do NOT stream each dataUrl via image_item — a single full-size
+          // postMessage was freezing iOS when only 1 photo was picked.
+          if (streamResults) {
+            post({ type: 'images', dataUrls: results, total: results.length });
+          } else {
+            post({
               type: 'image',
               dataUrl: results[0] || '',
-              mime: files[0] && files[0].type || 'image/jpeg',
-              name: files[0] && files[0].name || 'avatar.jpg'
+              mime: 'image/jpeg',
+              name: (files[0] && files[0].name) || 'photo.jpg'
             });
+          }
+        }
+        function next() {
+          if (idx >= files.length) {
+            setTimeout(finishAll, streamResults ? 80 : 0);
             return;
           }
-          var file = files[idx++];
-          if (file.size > 8 * 1024 * 1024) {
-            button.disabled = false;
-            setStatus('');
-            post({ type: 'error', message: 'One image is too large (max about 8 MB).' });
-            return;
+          setStatus('Preparing photo ' + (idx + 1) + ' of ' + files.length + '…');
+          // Progress only — no dataUrl payload (keeps the bridge light).
+          if (streamResults) {
+            post({ type: 'progress', index: idx, total: files.length });
           }
-          var reader = new FileReader();
-          reader.onerror = function () {
-            button.disabled = false;
-            setStatus('');
-            post({ type: 'error', message: 'Could not read that image.' });
-          };
-          reader.onload = function () {
-            var dataUrl = String(reader.result || '');
+          compressFile(files[idx], function (dataUrl) {
             if (dataUrl) results.push(dataUrl);
-            next();
-          };
-          reader.readAsDataURL(file);
+            idx += 1;
+            setTimeout(next, streamResults ? 60 : 40);
+          });
         }
         next();
       }
@@ -440,12 +554,14 @@ export function AvatarUploadModal({
   const cropWebRef = useRef<WebView>(null);
   const handledRef = useRef(false);
   const pendingImagesRef = useRef<string[]>([]);
+  const pickingGalleryRef = useRef(false);
   const [mode, setMode] = useState<Mode>("chooser");
   const [galleryReady, setGalleryReady] = useState(false);
   const [cropSource, setCropSource] = useState<string | null>(null);
   const [cropImageReady, setCropImageReady] = useState(false);
   const [clipping, setClipping] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [preparingPhotos, setPreparingPhotos] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
 
   const cropHtml = useMemo(
@@ -457,29 +573,50 @@ export function AvatarUploadModal({
     () =>
       buildGalleryHtml({
         multiple: allowMultiple,
-        maxCount: allowMultiple ? maxSelection : 1,
+        maxCount: Math.max(1, maxSelection),
+        // Chat attachments must always stream (1 or many). The single
+        // `image` postMessage path freezes WKWebView on iOS.
+        streamResults: skipCrop,
       }),
-    [allowMultiple, maxSelection],
+    [allowMultiple, maxSelection, skipCrop],
   );
 
   useEffect(() => {
-    if (!visible) {
+    if (visible) {
+      // Fresh open after a native-gallery pick that closed us early.
       setMode("chooser");
       setGalleryReady(false);
       setCropSource(null);
       setCropImageReady(false);
       setClipping(false);
       setCapturing(false);
+      setPreparingPhotos(false);
       handledRef.current = false;
       pendingImagesRef.current = [];
+      return;
     }
+    // Native gallery intentionally closes this Modal before PHPicker opens.
+    // Do not wipe pick state mid-flight or the in-progress selection is aborted.
+    if (pickingGalleryRef.current) return;
+    setMode("chooser");
+    setGalleryReady(false);
+    setCropSource(null);
+    setCropImageReady(false);
+    setClipping(false);
+    setCapturing(false);
+    setPreparingPhotos(false);
+    handledRef.current = false;
+    pendingImagesRef.current = [];
   }, [visible]);
 
   const emitCropped = (dataUrl: string) => {
     if (handledRef.current || uploading) return;
     handledRef.current = true;
     setClipping(false);
-    onImageSelected(dataUrl);
+    setPreparingPhotos(false);
+    InteractionManager.runAfterInteractions(() => {
+      onImageSelected(dataUrl);
+    });
   };
 
   const emitImages = (dataUrls: string[]) => {
@@ -487,16 +624,23 @@ export function AvatarUploadModal({
     const cleaned = dataUrls
       .filter((url) => typeof url === "string" && url.startsWith("data:image/"))
       .slice(0, Math.max(1, maxSelection));
-    if (!cleaned.length) return;
+    if (!cleaned.length) {
+      setPreparingPhotos(false);
+      onError?.("Could not prepare those photos. Try a smaller image.");
+      return;
+    }
     handledRef.current = true;
     setClipping(false);
-    if (onImagesSelected) onImagesSelected(cleaned);
-    else onImageSelected(cleaned[0]);
+    setPreparingPhotos(false);
+    InteractionManager.runAfterInteractions(() => {
+      if (onImagesSelected) onImagesSelected(cleaned);
+      else onImageSelected(cleaned[0]);
+    });
   };
 
   const openCrop = (dataUrl: string) => {
     if (skipCrop) {
-      emitCropped(dataUrl);
+      emitImages([dataUrl]);
       return;
     }
     handledRef.current = false;
@@ -520,22 +664,184 @@ export function AvatarUploadModal({
     setMode("camera");
   };
 
+  /**
+   * Chat attachments use the native PHPicker / Android picker.
+   *
+   * iOS freezes if we stack or tear down RCT Modal while PHPicker is still
+   * presenting/dismissing ("Attempt to present RCTFabricModalHostViewController
+   * while a presentation is in progress"). Single-image picks finish processing
+   * faster than multi, so they hit that race; multi often "worked" by accident.
+   *
+   * Flow: close our Modal → wait → open picker → wait → hand images to parent.
+   */
+  const openNativeGallery = async () => {
+    if (
+      uploading ||
+      preparingPhotos ||
+      pickingGalleryRef.current ||
+      handledRef.current
+    ) {
+      return;
+    }
+    handledRef.current = false;
+    pendingImagesRef.current = [];
+    pickingGalleryRef.current = true;
+
+    const settleMs = Platform.OS === "ios" ? 450 : 80;
+
+    try {
+      if (Platform.OS !== "web") {
+        const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+        let granted = current.granted;
+        if (!granted && current.canAskAgain) {
+          const asked = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          granted = asked.granted;
+        }
+        if (!granted) {
+          pickingGalleryRef.current = false;
+          onError?.(
+            "Photo library permission is required to attach images.",
+          );
+          return;
+        }
+      }
+
+      // 1) Dismiss AvatarUploadModal BEFORE presenting PHPicker.
+      onClose();
+      await waitForPresentationSettle(settleMs);
+
+      const limit = Math.max(1, Math.min(5, maxSelection));
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        selectionLimit: limit,
+        quality: 1,
+        base64: false,
+        exif: false,
+        preferredAssetRepresentationMode:
+          ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      });
+
+      // 2) Wait for PHPicker dismiss — do not touch any Modal until this settles.
+      await waitForPresentationSettle(settleMs);
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      const dataUrls: string[] = [];
+      for (const asset of result.assets.slice(0, limit)) {
+        if (!asset.uri) continue;
+        try {
+          const width = asset.width || 0;
+          const height = asset.height || 0;
+          const longEdge = Math.max(width, height);
+          const actions =
+            longEdge > 1280
+              ? [
+                  {
+                    resize:
+                      width >= height
+                        ? { width: 1280 }
+                        : { height: 1280 },
+                  },
+                ]
+              : [];
+          const prepared = await ImageManipulator.manipulateAsync(
+            asset.uri,
+            actions,
+            {
+              compress: 0.55,
+              format: ImageManipulator.SaveFormat.JPEG,
+              base64: true,
+            },
+          );
+          if (prepared.base64) {
+            dataUrls.push(`data:image/jpeg;base64,${prepared.base64}`);
+          }
+        } catch {
+          // Skip this asset; try the rest.
+        }
+      }
+
+      if (!dataUrls.length) {
+        onError?.(
+          "Could not read those photos. Try again or pick a smaller image.",
+        );
+        return;
+      }
+
+      // Modal is already closed — deliver images only (no Modal present/dismiss).
+      const cleaned = dataUrls
+        .filter((url) => url.startsWith("data:image/"))
+        .slice(0, Math.max(1, maxSelection));
+      if (!cleaned.length) {
+        onError?.("Could not prepare those photos. Try a smaller image.");
+        return;
+      }
+      handledRef.current = true;
+      if (onImagesSelected) onImagesSelected(cleaned);
+      else onImageSelected(cleaned[0]);
+    } catch {
+      onError?.("Could not open the photo library. Try again.");
+    } finally {
+      pickingGalleryRef.current = false;
+    }
+  };
+
   const takePhoto = async () => {
     if (capturing || uploading || handledRef.current) return;
     setCapturing(true);
     try {
       const photo = await cameraRef.current?.takePictureAsync({
-        quality: 0.65,
-        base64: true,
+        quality: skipCrop ? 0.7 : 0.65,
+        base64: !skipCrop,
         exif: false,
         shutterSound: false,
       });
-      if (!photo?.base64) {
+      if (!photo?.uri && !photo?.base64) {
         onError?.("Could not capture photo. Try again.");
         return;
       }
-      openCrop(`data:image/jpeg;base64,${photo.base64}`);
+      if (skipCrop) {
+        if (!photo?.uri) {
+          onError?.("Could not capture photo. Try again.");
+          return;
+        }
+        setPreparingPhotos(true);
+        const width = photo.width || 0;
+        const height = photo.height || 0;
+        const longEdge = Math.max(width, height);
+        const actions =
+          longEdge > 1280
+            ? [
+                {
+                  resize:
+                    width >= height ? { width: 1280 } : { height: 1280 },
+                },
+              ]
+            : [];
+        const prepared = await ImageManipulator.manipulateAsync(
+          photo.uri,
+          actions,
+          {
+            compress: 0.55,
+            format: ImageManipulator.SaveFormat.JPEG,
+            base64: true,
+          },
+        );
+        setPreparingPhotos(false);
+        if (!prepared.base64) {
+          onError?.("Could not prepare that photo. Try again.");
+          return;
+        }
+        emitImages([`data:image/jpeg;base64,${prepared.base64}`]);
+      } else {
+        const dataUrl = `data:image/jpeg;base64,${photo!.base64}`;
+        openCrop(dataUrl);
+      }
     } catch {
+      setPreparingPhotos(false);
       onError?.("Could not capture photo. Try again.");
     } finally {
       setCapturing(false);
@@ -563,8 +869,13 @@ export function AvatarUploadModal({
         dataUrls?: unknown;
         message?: string;
       };
+      if (raw.type === "preparing" || raw.type === "progress") {
+        setPreparingPhotos(true);
+        return;
+      }
       if (raw.type === "error") {
         setClipping(false);
+        setPreparingPhotos(false);
         onError?.(raw.message || "Could not process image.");
         return;
       }
@@ -573,11 +884,13 @@ export function AvatarUploadModal({
         return;
       }
       if (raw.type === "images" && Array.isArray(raw.dataUrls)) {
+        pendingImagesRef.current = [];
         emitImages(
           raw.dataUrls.filter((item): item is string => typeof item === "string"),
         );
         return;
       }
+      // Legacy stream path (kept for safety if an older WebView bundle is cached).
       if (raw.type === "image_item" && typeof raw.dataUrl === "string" && raw.dataUrl) {
         pendingImagesRef.current.push(raw.dataUrl);
         return;
@@ -585,11 +898,15 @@ export function AvatarUploadModal({
       if (raw.type === "images_done") {
         const batch = pendingImagesRef.current;
         pendingImagesRef.current = [];
-        emitImages(batch);
+        setTimeout(() => emitImages(batch), 50);
         return;
       }
       if (raw.type === "image" && typeof raw.dataUrl === "string" && raw.dataUrl) {
-        openCrop(raw.dataUrl);
+        if (skipCrop) {
+          emitImages([raw.dataUrl]);
+        } else {
+          openCrop(raw.dataUrl);
+        }
         return;
       }
       if (
@@ -601,6 +918,7 @@ export function AvatarUploadModal({
       }
     } catch {
       setClipping(false);
+      setPreparingPhotos(false);
       onError?.("Could not read the selected image.");
     }
   };
@@ -673,12 +991,18 @@ export function AvatarUploadModal({
               <Pressable
                 style={styles.primaryBtn}
                 onPress={() => void openCamera()}
+                disabled={preparingPhotos}
               >
                 <Text style={styles.primaryBtnText}>Take photo</Text>
               </Pressable>
               <Pressable
                 style={styles.secondaryBtn}
+                disabled={preparingPhotos}
                 onPress={() => {
+                  if (skipCrop) {
+                    void openNativeGallery();
+                    return;
+                  }
                   handledRef.current = false;
                   pendingImagesRef.current = [];
                   setGalleryReady(false);
@@ -687,6 +1011,12 @@ export function AvatarUploadModal({
               >
                 <Text style={styles.secondaryBtnText}>Browse gallery</Text>
               </Pressable>
+              {preparingPhotos ? (
+                <View style={[styles.loading, { marginTop: 18 }]}>
+                  <ActivityIndicator color={colors.accent} />
+                  <Text style={styles.loadingText}>Preparing photos…</Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -742,6 +1072,12 @@ export function AvatarUploadModal({
                 domStorageEnabled
                 setSupportMultipleWindows={false}
               />
+              {preparingPhotos ? (
+                <View style={[styles.loading, styles.preparingOverlay]}>
+                  <ActivityIndicator color={colors.accent} />
+                  <Text style={styles.loadingText}>Preparing photos…</Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -835,6 +1171,10 @@ const styles = StyleSheet.create({
     gap: 10,
     zIndex: 2,
     backgroundColor: colors.bg,
+  },
+  preparingOverlay: {
+    zIndex: 4,
+    backgroundColor: "rgba(244,247,251,0.92)",
   },
   loadingText: { color: colors.textMuted, fontSize: 13 },
   chooser: {

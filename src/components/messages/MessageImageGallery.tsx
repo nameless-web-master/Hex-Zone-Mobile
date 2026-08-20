@@ -137,6 +137,7 @@ export function MessageImageGallery({
                     <Image
                       source={{ uri }}
                       resizeMode="cover"
+                      fadeDuration={0}
                       style={{ width: pageWidth, height: frameHeight }}
                     />
                   </Pressable>
