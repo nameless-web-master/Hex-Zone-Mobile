@@ -596,6 +596,7 @@ export function messageFromGeoPropagation(
     message: text,
     created_at: createdAt,
     msg: bodyFromMeta,
+    ...(images.length ? { images } : {}),
     ...(servicePa.subject ? { subject: servicePa.subject } : {}),
     ...(servicePa.topic ? { topic: servicePa.topic } : {}),
     ...(servicePa.subtopic ? { subtopic: servicePa.subtopic } : {}),

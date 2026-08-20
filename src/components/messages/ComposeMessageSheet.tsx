@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -9,12 +10,13 @@ import {
   View,
 } from "react-native";
 import { useRouter, type Href } from "expo-router";
+import * as ImageManipulator from "expo-image-manipulator";
+import * as ImagePicker from "expo-image-picker";
 import { ImagePlus, Send } from "lucide-react-native";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { MessageImageGallery } from "@/components/messages/MessageImageGallery";
-import { AvatarUploadModal } from "@/components/settings/AvatarUploadModal";
 import { useAuth } from "@/context/AuthContext";
 import { useMessagesFeed } from "@/hooks/useMessagesFeed";
 import { useBottomSafeInset } from "@/hooks/useBottomSafeInset";
@@ -60,6 +62,37 @@ import {
 } from "@/lib/servicePaTopics";
 import { colors } from "@/theme/colors";
 
+function waitMs(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Resize + JPEG-compress a picked asset into a data URL for upload/preview. */
+async function prepareChatImageDataUrl(asset: {
+  uri: string;
+  width?: number;
+  height?: number;
+}): Promise<string | null> {
+  if (!asset.uri) return null;
+  const width = asset.width || 0;
+  const height = asset.height || 0;
+  const longEdge = Math.max(width, height);
+  const actions =
+    longEdge > 1280
+      ? [
+          {
+            resize:
+              width >= height ? { width: 1280 } : { height: 1280 },
+          },
+        ]
+      : [];
+  const prepared = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+    compress: 0.55,
+    format: ImageManipulator.SaveFormat.JPEG,
+    base64: true,
+  });
+  return prepared.base64 ? `data:image/jpeg;base64,${prepared.base64}` : null;
+}
+
 export function ComposeMessageSheet({
   visible,
   onClose,
@@ -86,7 +119,7 @@ export function ComposeMessageSheet({
   const [composeReceiverId, setComposeReceiverId] = useState("");
   const [draft, setDraft] = useState("");
   const [composeImages, setComposeImages] = useState<string[]>([]);
-  const [imagePickerOpen, setImagePickerOpen] = useState(false);
+  const pickingImagesRef = useRef(false);
   const [composeServicePaFields, setComposeServicePaFields] =
     useState<ServicePaComposeFields>({ subject: "", topic: "", subtopic: "" });
   const [sending, setSending] = useState(false);
@@ -130,6 +163,7 @@ export function ComposeMessageSheet({
     setComposeStatus("");
     setComposeReceiverId("");
     setPrivateSearchQuery("");
+    pickingImagesRef.current = false;
     setPrivateSearchResults([]);
   }, [visible]);
 
@@ -223,9 +257,146 @@ export function ComposeMessageSheet({
   );
 
   const closeAll = useCallback(() => {
-    setImagePickerOpen(false);
     onClose();
   }, [onClose]);
+
+  const attachPreparedImages = useCallback((dataUrls: string[]) => {
+    if (!dataUrls.length) return;
+    setComposeStatus("");
+    setComposeImages((prev) =>
+      [...prev, ...dataUrls].slice(0, MAX_MESSAGE_IMAGES),
+    );
+  }, []);
+
+  /**
+   * Pick chat photos without a second RCT Modal.
+   * BottomSheet stays open; only the system picker presents/dismisses.
+   * (Toggling BottomSheet ↔ AvatarUploadModal caused the iOS freeze:
+   * "Attempt to present RCTFabricModalHostViewController while a
+   * presentation is in progress".)
+   */
+  const pickChatImages = useCallback(
+    async (source: "library" | "camera") => {
+      if (pickingImagesRef.current || sending) return;
+      const remaining = MAX_MESSAGE_IMAGES - composeImages.length;
+      if (remaining <= 0) {
+        setComposeStatus("You can attach up to 5 photos.");
+        return;
+      }
+
+      pickingImagesRef.current = true;
+      const settleMs = Platform.OS === "ios" ? 400 : 50;
+
+      try {
+        // Let the iOS action sheet / alert finish dismissing first.
+        await waitMs(settleMs);
+
+        if (source === "library") {
+          const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+          let granted = current.granted;
+          if (!granted && current.canAskAgain) {
+            const asked =
+              await ImagePicker.requestMediaLibraryPermissionsAsync();
+            granted = asked.granted;
+          }
+          if (!granted) {
+            setComposeStatus(
+              "Photo library permission is required to attach images.",
+            );
+            return;
+          }
+        } else {
+          const current = await ImagePicker.getCameraPermissionsAsync();
+          let granted = current.granted;
+          if (!granted && current.canAskAgain) {
+            const asked = await ImagePicker.requestCameraPermissionsAsync();
+            granted = asked.granted;
+          }
+          if (!granted) {
+            setComposeStatus("Camera permission is required to take a photo.");
+            return;
+          }
+        }
+
+        const result =
+          source === "library"
+            ? await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ["images"],
+                allowsMultipleSelection: true,
+                selectionLimit: remaining,
+                quality: 1,
+                base64: false,
+                exif: false,
+                preferredAssetRepresentationMode:
+                  ImagePicker.UIImagePickerPreferredAssetRepresentationMode
+                    .Compatible,
+              })
+            : await ImagePicker.launchCameraAsync({
+                mediaTypes: ["images"],
+                quality: 0.7,
+                base64: false,
+                exif: false,
+                preferredAssetRepresentationMode:
+                  ImagePicker.UIImagePickerPreferredAssetRepresentationMode
+                    .Compatible,
+              });
+
+        // Wait for PHPicker / camera UI to finish dismissing before any
+        // React state that could interact with the BottomSheet Modal.
+        await waitMs(settleMs);
+
+        if (result.canceled || !result.assets?.length) return;
+
+        setComposeStatus("Preparing photos…");
+        const dataUrls: string[] = [];
+        for (const asset of result.assets.slice(0, remaining)) {
+          try {
+            const dataUrl = await prepareChatImageDataUrl(asset);
+            if (dataUrl) dataUrls.push(dataUrl);
+          } catch {
+            // Skip unreadable assets.
+          }
+        }
+
+        if (!dataUrls.length) {
+          setComposeStatus(
+            "Could not read those photos. Try again or pick a smaller image.",
+          );
+          return;
+        }
+
+        attachPreparedImages(dataUrls);
+      } catch {
+        setComposeStatus("Could not open the photo picker. Try again.");
+      } finally {
+        pickingImagesRef.current = false;
+      }
+    },
+    [attachPreparedImages, composeImages.length, sending],
+  );
+
+  const openAddPhotosMenu = useCallback(() => {
+    if (sending || pickingImagesRef.current) return;
+    if (composeImages.length >= MAX_MESSAGE_IMAGES) {
+      setComposeStatus("You can attach up to 5 photos.");
+      return;
+    }
+    Alert.alert("Add photos", "Take a new photo or choose from your library.", [
+      {
+        text: "Take photo",
+        onPress: () => {
+          void pickChatImages("camera");
+        },
+      },
+      {
+        text: "Browse gallery",
+        onPress: () => {
+          void pickChatImages("library");
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }, [composeImages.length, pickChatImages, sending]);
 
   const afterSuccessfulSend = useCallback(
     (type: MessageType) => {
@@ -382,7 +553,7 @@ export function ComposeMessageSheet({
 
   return (
     <>
-      <BottomSheet visible={visible && !imagePickerOpen} onClose={closeAll} maxHeight="88%">
+      <BottomSheet visible={visible} onClose={closeAll} maxHeight="88%">
         <View
           style={{
             padding: 24,
@@ -621,14 +792,7 @@ export function ComposeMessageSheet({
             ) : null}
 
             <Pressable
-              onPress={() => {
-                if (sending) return;
-                if (composeImages.length >= MAX_MESSAGE_IMAGES) {
-                  setComposeStatus("You can attach up to 5 photos.");
-                  return;
-                }
-                setImagePickerOpen(true);
-              }}
+              onPress={openAddPhotosMenu}
               disabled={sending}
               style={{
                 marginTop: 12, alignSelf: "flex-start",
@@ -648,7 +812,9 @@ export function ComposeMessageSheet({
               <Text
                 style={{
                   color:
-                    composeStatus.startsWith("Sending") || composeStatus.startsWith("Uploading")
+                    composeStatus.startsWith("Sending") ||
+                    composeStatus.startsWith("Uploading") ||
+                    composeStatus.startsWith("Preparing")
                       ? colors.textMuted
                       : colors.danger,
                   fontSize: 12, marginTop: 8,
@@ -672,27 +838,6 @@ export function ComposeMessageSheet({
           </View>
         </View>
       </BottomSheet>
-      <AvatarUploadModal
-        visible={imagePickerOpen}
-        skipCrop
-        maxSelection={Math.max(1, MAX_MESSAGE_IMAGES - composeImages.length)}
-        chooserTitle="Add photos"
-        chooserLead="Take a photo, or pick several from gallery (up to 5 per message)."
-        onClose={() => setImagePickerOpen(false)}
-        onImageSelected={(dataUrl) => {
-          setComposeImages((prev) =>
-            prev.length >= MAX_MESSAGE_IMAGES ? prev : [...prev, dataUrl],
-          );
-          setImagePickerOpen(false);
-          setComposeStatus("");
-        }}
-        onImagesSelected={(dataUrls) => {
-          setComposeImages((prev) => [...prev, ...dataUrls].slice(0, MAX_MESSAGE_IMAGES));
-          setImagePickerOpen(false);
-          setComposeStatus("");
-        }}
-        onError={(message) => setComposeStatus(message)}
-      />
     </>
   );
 }
