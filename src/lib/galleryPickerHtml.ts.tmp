@@ -1,0 +1,6 @@
+﻿function buildGalleryHtml(options: {
+  multiple: boolean;
+  maxCount: number;
+  /** Chat photos: always stream compressed items (avoids iOS freeze on 1 image). */
+  streamResults: boolean;
+}
