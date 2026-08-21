@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, type Href } from "expo-router";
-import { LogOut, MessageCircle, Siren, Settings, UserRound } from "lucide-react-native";
+import { LogOut, Siren, Settings, UserRound } from "lucide-react-native";
 import { useCompose } from "@/context/ComposeContext";
 import { AlertBellButton } from "@/components/ui/AlertBellButton";
 import { ProfileAvatarButton } from "@/components/ui/ProfileAvatarButton";
@@ -20,18 +20,12 @@ type AppHeaderProps = {
   title: string;
   subtitle?: ReactNode;
   style?: ViewStyle;
-  showMessagesButton?: boolean;
-  onMessagesPress?: () => void;
-  messagesButtonSelected?: boolean;
 };
 
 export function AppHeader({
   title,
   subtitle,
   style,
-  showMessagesButton = true,
-  onMessagesPress,
-  messagesButtonSelected = false,
 }: AppHeaderProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -68,26 +62,6 @@ export function AppHeader({
           <Siren size={22} color={colors.accent} strokeWidth={2.2} />
         </Pressable>
         <AlertBellButton size={42} />
-        {showMessagesButton ? (
-          <Pressable
-            onPress={
-              onMessagesPress ??
-              (() =>
-                router.push("/(tabs)/recent-services" as unknown as Href))
-            }
-            accessibilityLabel={
-              onMessagesPress ? "Recent services" : "Open recent services"
-            }
-            accessibilityState={{ selected: messagesButtonSelected }}
-            style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
-          >
-            <MessageCircle
-              size={21}
-              color={messagesButtonSelected ? colors.accent : colors.text}
-              strokeWidth={2.2}
-            />
-          </Pressable>
-        ) : null}
         <ProfileAvatarButton
           size={40}
           selected={menuOpen}

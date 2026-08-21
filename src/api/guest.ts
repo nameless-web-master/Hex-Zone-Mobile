@@ -133,7 +133,7 @@ export function appScheme(): string {
   const raw = Constants.expoConfig?.scheme;
   const value = Array.isArray(raw) ? raw[0] : raw;
   const scheme = typeof value === "string" ? value.trim() : "";
-  return scheme || "zoneweaver";
+  return scheme || "safezonepatrol";
 }
 
 /** Build any deep link of the form `<scheme>:///<path>?<query>`. */
@@ -156,12 +156,17 @@ export function buildMemberInviteUrl(token: string): string {
 
 /**
  * Convert a server-provided `/access?...` path into an app deep link.
- * Example: `/access?gt=...&zid=...` → `zoneweaver:///access?gt=...&zid=...`
+ * Example: `/access?gt=...&zid=...` → `safezonepatrol:///access?gt=...&zid=...`
  */
 export function toAccessDeepLink(pathWithQuery: string | null | undefined): string | null {
   const path = (pathWithQuery ?? "").trim();
   if (!path) return null;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path)) return path;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path)) {
+    if (/^zoneweaver:\/\//i.test(path)) {
+      return `${appScheme()}://${path.slice("zoneweaver://".length)}`;
+    }
+    return path;
+  }
   const cleaned = path.startsWith("/") ? path.slice(1) : path;
   return `${appScheme()}:///${cleaned}`;
 }

@@ -27,8 +27,11 @@ function iconForRoute(name: string, color: string, size: number) {
   }
 }
 
-/** Pill height + gap above the home-indicator / nav bar. */
+/** Nav pill height (approx). */
 export const FLOATING_TAB_BAR_HEIGHT = 56;
+/** Compose FAB sits above the pill. */
+const FAB_SIZE = 52;
+const FAB_GAP_ABOVE_PILL = 14;
 
 export function FloatingTabBar({
   state,
@@ -61,6 +64,38 @@ export function FloatingTabBar({
         backgroundColor: "transparent",
       }}
     >
+      {/* + button above the nav pill (right-aligned) */}
+      {user ? (
+        <View
+          pointerEvents="box-none"
+          style={{
+            alignItems: "flex-end",
+            marginBottom: FAB_GAP_ABOVE_PILL,
+          }}
+        >
+          <Pressable
+            onPress={openCompose}
+            accessibilityRole="button"
+            accessibilityLabel="New message"
+            style={{
+              width: FAB_SIZE,
+              height: FAB_SIZE,
+              borderRadius: FAB_SIZE / 2,
+              backgroundColor: colors.accent,
+              alignItems: "center",
+              justifyContent: "center",
+              shadowColor: colors.accent,
+              shadowOffset: { width: 0, height: 6 },
+              shadowOpacity: 0.35,
+              shadowRadius: 12,
+              elevation: 10,
+            }}
+          >
+            <Plus size={24} color="#FFFFFF" strokeWidth={2.5} />
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* Centered nav pill */}
       <View
         pointerEvents="box-none"
@@ -147,34 +182,6 @@ export function FloatingTabBar({
           })}
         </View>
       </View>
-
-      {/* Floated above the nav pill so it does not sit on the same baseline */}
-      {user ? (
-        <Pressable
-          onPress={openCompose}
-          accessibilityRole="button"
-          accessibilityLabel="New message"
-          style={{
-            position: "absolute",
-            right: 16,
-            bottom:
-              Math.max(bottomInset, 8) + 6 + FLOATING_TAB_BAR_HEIGHT + 12,
-            width: 52,
-            height: 52,
-            borderRadius: 26,
-            backgroundColor: colors.accent,
-            alignItems: "center",
-            justifyContent: "center",
-            shadowColor: colors.accent,
-            shadowOffset: { width: 0, height: 6 },
-            shadowOpacity: 0.35,
-            shadowRadius: 12,
-            elevation: 10,
-          }}
-        >
-          <Plus size={24} color="#FFFFFF" strokeWidth={2.5} />
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -187,5 +194,12 @@ export const FLOATING_TAB_BAR_CONTENT_INSET = 78;
 
 export function useFloatingTabBarInset(): number {
   const bottomInset = useBottomSafeInset();
-  return FLOATING_TAB_BAR_HEIGHT + Math.max(bottomInset, 8) + 14;
+  // Pill + FAB stacked above it + gaps + home-indicator padding.
+  return (
+    FLOATING_TAB_BAR_HEIGHT +
+    FAB_SIZE +
+    FAB_GAP_ABOVE_PILL +
+    Math.max(bottomInset, 8) +
+    14
+  );
 }

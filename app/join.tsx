@@ -40,13 +40,16 @@ export default function JoinScreen() {
   const [confirm, setConfirm] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paramsSettled, setParamsSettled] = useState(false);
 
   useEffect(() => {
-    if (initializing) return;
-    if (!inviteToken) {
-      router.replace(authToken ? "/(tabs)" : "/(auth)/welcome");
+    if (inviteToken) {
+      setParamsSettled(true);
+      return;
     }
-  }, [initializing, inviteToken, authToken, router]);
+    const timer = setTimeout(() => setParamsSettled(true), 400);
+    return () => clearTimeout(timer);
+  }, [inviteToken]);
 
   const onJoin = async () => {
     setError(null);
@@ -106,7 +109,7 @@ export default function JoinScreen() {
     }
   };
 
-  if (initializing || !inviteToken) {
+  if (initializing || !paramsSettled) {
     return (
       <GradientBackground>
         <View
@@ -118,6 +121,50 @@ export default function JoinScreen() {
         >
           <ActivityIndicator color={colors.accent} />
         </View>
+      </GradientBackground>
+    );
+  }
+
+  if (!inviteToken) {
+    return (
+      <GradientBackground>
+        <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+          <ScreenHeader title="Member invite" subtitle="Join from invite link" />
+          <View style={{ paddingHorizontal: 20 }}>
+            <Card glow style={{ gap: 10 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <QrCode size={20} color={colors.accent} />
+                <Text
+                  style={{
+                    color: colors.text,
+                    fontWeight: "700",
+                    fontSize: 16,
+                  }}
+                >
+                  Invalid invite
+                </Text>
+              </View>
+              <Text style={{ color: colors.textMuted, fontSize: 13 }}>
+                This link is missing an invite token. Ask your host for a new
+                member invite.
+              </Text>
+              <Button
+                label={authToken ? "Back to dashboard" : "Back to welcome"}
+                variant="outline"
+                onPress={() =>
+                  router.replace(authToken ? "/(tabs)" : "/(auth)/welcome")
+                }
+                fullWidth
+              />
+            </Card>
+          </View>
+        </SafeAreaView>
       </GradientBackground>
     );
   }
