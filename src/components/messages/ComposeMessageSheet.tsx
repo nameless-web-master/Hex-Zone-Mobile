@@ -136,6 +136,13 @@ export function ComposeMessageSheet({
     { id: string; label: string }[]
   >([]);
   const [loadingComposeMeta, setLoadingComposeMeta] = useState(false);
+  const composeScrollRef = useRef<ScrollView>(null);
+
+  const scrollComposeFieldIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      composeScrollRef.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
 
   const composeZoneId = useMemo(
     () => (zoneId?.trim() ? zoneId.trim() : null),
@@ -556,9 +563,12 @@ export function ComposeMessageSheet({
       <BottomSheet visible={visible} onClose={closeAll} maxHeight="88%">
         <View
           style={{
-            padding: 24,
+            paddingHorizontal: 24,
+            paddingTop: 24,
             gap: 12,
             paddingBottom: Math.max(bottomInset, 16) + 12,
+            flexGrow: 1,
+            flexShrink: 1,
           }}
         >
           <View style={{ alignItems: "center", paddingBottom: 10 }}>
@@ -577,10 +587,12 @@ export function ComposeMessageSheet({
           </Text>
 
           <ScrollView
+            ref={composeScrollRef}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
-            style={{ maxHeight: 460 }}
-            contentContainerStyle={{ paddingBottom: 8 }}
+            keyboardDismissMode="interactive"
+            style={{ flexGrow: 1, flexShrink: 1, minHeight: 160 }}
+            contentContainerStyle={{ paddingBottom: 16 }}
           >
             <Text
               style={{
@@ -655,6 +667,7 @@ export function ComposeMessageSheet({
                         setPrivateSearchQuery(text);
                         setComposeReceiverId("");
                       }}
+                      onFocus={scrollComposeFieldIntoView}
                       style={{
                         backgroundColor: colors.bgCard,
                         borderWidth: 1, borderColor: colors.border,
@@ -702,6 +715,7 @@ export function ComposeMessageSheet({
                   onChangeText={(subject) =>
                     setComposeServicePaFields((prev) => ({ ...prev, subject }))
                   }
+                  onFocus={scrollComposeFieldIntoView}
                   maxLength={200}
                   style={{
                     backgroundColor: colors.bgCard,
@@ -770,6 +784,7 @@ export function ComposeMessageSheet({
               placeholderTextColor={colors.textDim}
               value={draft}
               onChangeText={setDraft}
+              onFocus={scrollComposeFieldIntoView}
               multiline
               style={{
                 marginTop: 16, minHeight: 100,
