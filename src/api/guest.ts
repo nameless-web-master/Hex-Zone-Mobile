@@ -106,7 +106,8 @@ export type MemberInviteQrToken = {
   token: string;
   owner_id: number;
   used: boolean;
-  expires_at: string;
+  /** Null when the invite never expires (printed outdoor-sign QR). */
+  expires_at: string | null;
   created_at: string;
 };
 
@@ -172,12 +173,15 @@ export function toAccessDeepLink(pathWithQuery: string | null | undefined): stri
 }
 
 export async function generateMemberInviteQr(payload?: {
-  expires_in_hours?: number;
+  /** Hours until expiry. `0` or `null` means the token never expires. */
+  expires_in_hours?: number | null;
 }): Promise<ApiResult<MemberInviteQrResult>> {
+  const hours = payload?.expires_in_hours;
+  const expiresInHours = hours === null ? 0 : hours === undefined ? 24 : hours;
   const result = await request<MemberInviteQrToken>({
     method: "POST",
     url: "/utils/qr/generate",
-    data: { expires_in_hours: payload?.expires_in_hours ?? 24 },
+    data: { expires_in_hours: expiresInHours },
   });
   if (result.error || !result.data?.token) {
     return {
@@ -246,6 +250,7 @@ export type GuestAccessQrTokenLink = {
 
 export type CreateGuestAccessQrTokenPayload = {
   zone_id: string;
+  /** Hours until expiry. `0` means the token never expires. */
   expires_in_hours?: number;
   expires_at?: string;
   event_id?: string;

@@ -212,8 +212,9 @@ export default function JoinScreen() {
                     lineHeight: 18,
                   }}
                 >
-                  Your account will inherit the inviter's zone and account
-                  type. No need to pick them.
+                  Your account will inherit the inviter's zone. Your account
+                  type matches theirs, except Private (system administrator)
+                  invites become Exclusive.
                 </Text>
                 <View
                   style={{

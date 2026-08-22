@@ -1,8 +1,10 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
+  Keyboard,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   View,
@@ -22,10 +24,22 @@ type BottomSheetProps = {
   overlayColor?: string;
 };
 
+function resolveMaxHeight(
+  maxHeight: number | `${number}%`,
+  windowHeight: number,
+): number {
+  if (typeof maxHeight === "number") return maxHeight;
+  return (windowHeight * Number.parseFloat(maxHeight)) / 100;
+}
+
 /**
  * Overlay paints immediately (Modal animationType none). Only the sheet
  * panel slides. The dimmed region is a flex spacer above the sheet, so
  * backdrop taps are not covered by the panel's hit box.
+ *
+ * When the keyboard is open the sheet is lifted by the keyboard height and
+ * capped so it stays on screen — otherwise focused inputs sit behind the
+ * keyboard (iOS Modal does not honor adjustResize).
  */
 export function BottomSheet({
   visible,
@@ -38,6 +52,24 @@ export function BottomSheet({
   const { height: windowHeight } = useWindowDimensions();
   const translateY = useRef(new Animated.Value(windowHeight)).current;
   const wasVisible = useRef(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) setKeyboardHeight(0);
+  }, [visible]);
 
   useEffect(() => {
     if (visible && !wasVisible.current) {
@@ -53,6 +85,11 @@ export function BottomSheet({
     }
     wasVisible.current = visible;
   }, [visible, windowHeight, translateY]);
+
+  const requestedMax = resolveMaxHeight(maxHeight, windowHeight);
+  const available = Math.max(220, windowHeight - keyboardHeight);
+  const sheetMaxHeight = Math.min(requestedMax, available);
+  const keyboardOpen = keyboardHeight > 0;
 
   return (
     <Modal
@@ -73,7 +110,12 @@ export function BottomSheet({
         <Animated.View
           style={[
             styles.sheet,
-            { maxHeight, transform: [{ translateY }] },
+            {
+              maxHeight: sheetMaxHeight,
+              ...(keyboardOpen ? { height: sheetMaxHeight } : null),
+              marginBottom: keyboardHeight,
+              transform: [{ translateY }],
+            },
             contentStyle,
           ]}
         >

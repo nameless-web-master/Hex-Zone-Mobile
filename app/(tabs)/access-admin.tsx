@@ -61,11 +61,14 @@ import { colors } from "@/theme/colors";
 
 type Tab = "member" | "guest";
 
-const EXPIRY_OPTIONS: { label: string; hours: number }[] = [
+type ExpiryHours = number | null;
+
+const EXPIRY_OPTIONS: { label: string; hours: ExpiryHours }[] = [
   { label: "1 h", hours: 1 },
   { label: "24 h", hours: 24 },
   { label: "7 d", hours: 24 * 7 },
   { label: "30 d", hours: 24 * 30 },
+  { label: "∞", hours: null },
 ];
 
 function SegmentedTabs({
@@ -190,11 +193,11 @@ function QrPreview({ value, label }: { value: string | null; label?: string }) {
 }
 
 function MemberInviteSection({ disabled }: { disabled: boolean }) {
-  const [hours, setHours] = useState<number>(24);
+  const [hours, setHours] = useState<ExpiryHours>(24);
   const [generated, setGenerated] = useState<{
     token: string;
     url: string;
-    expires_at: string;
+    expires_at: string | null;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +213,7 @@ function MemberInviteSection({ disabled }: { disabled: boolean }) {
       setGenerated({
         token: result.data.token,
         url: result.data.url,
-        expires_at: result.data.expires_at,
+        expires_at: result.data.expires_at ?? null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not generate QR.");
@@ -233,8 +236,9 @@ function MemberInviteSection({ disabled }: { disabled: boolean }) {
         Member invite link
       </Text>
       <Text style={{ color: colors.textDim, fontSize: 12, lineHeight: 18 }}>
-        Generates a single-use registration link your invitee can open to join
-        your account as a member user.
+        Timed links (1 h, 24 h, 7 d, 30 d) are single-use. ∞ never expires and
+        can be scanned by multiple members — use that for a printed outdoor sign.
+        Joins still stop when this account reaches its member limit.
       </Text>
 
       <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 4 }}>
@@ -242,8 +246,11 @@ function MemberInviteSection({ disabled }: { disabled: boolean }) {
       </Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         {EXPIRY_OPTIONS.map((opt) => (
-          <Pressable key={opt.hours} onPress={() => setHours(opt.hours)}>
-            <Chip label={opt.label} active={hours === opt.hours} />
+          <Pressable key={opt.label} onPress={() => setHours(opt.hours)}>
+            <Chip
+              label={opt.label}
+              active={hours === opt.hours}
+            />
           </Pressable>
         ))}
       </View>
@@ -254,7 +261,9 @@ function MemberInviteSection({ disabled }: { disabled: boolean }) {
       />
       {generated ? (
         <Text style={{ color: colors.textDim, fontSize: 11, textAlign: "center" }}>
-          Expires {new Date(generated.expires_at).toLocaleString()}
+          {generated.expires_at
+            ? `Single-use · expires ${new Date(generated.expires_at).toLocaleString()}`
+            : "Multi-use · does not expire"}
         </Text>
       ) : null}
       {error ? (
@@ -294,7 +303,7 @@ function GuestAccessSection({
 }) {
   const [label, setLabel] = useState("");
   const [eventId, setEventId] = useState("");
-  const [hours, setHours] = useState<number>(24 * 7);
+  const [hours, setHours] = useState<ExpiryHours>(24 * 7);
   const [generated, setGenerated] = useState<{
     url: string;
     token: string;
@@ -333,7 +342,7 @@ function GuestAccessSection({
     try {
       const create = await createGuestAccessQrToken({
         zone_id: zoneId,
-        expires_in_hours: hours,
+        ...(hours == null ? { expires_in_hours: 0 } : { expires_in_hours: hours }),
         ...(label.trim() ? { label: label.trim() } : {}),
         ...(eventId.trim() ? { event_id: eventId.trim() } : {}),
       });
@@ -490,7 +499,7 @@ function GuestAccessSection({
         <Text style={{ color: colors.textMuted, fontSize: 11 }}>Token TTL</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {EXPIRY_OPTIONS.map((opt) => (
-            <Pressable key={opt.hours} onPress={() => setHours(opt.hours)}>
+            <Pressable key={opt.label} onPress={() => setHours(opt.hours)}>
               <Chip label={opt.label} active={hours === opt.hours} />
             </Pressable>
           ))}
