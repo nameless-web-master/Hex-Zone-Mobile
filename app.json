@@ -22,7 +22,7 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification",
-          "remote-notification"
+          "fetch"
         ],
         "NSCameraUsageDescription": "Safe Zone Patrol uses your camera to scan QR codes for zone access and member invites.",
         "NSPhotoLibraryUsageDescription": "Safe Zone Patrol uses your photo library so you can attach images to messages and update your profile photo.",
