@@ -77,7 +77,7 @@ Or use [EAS Build](https://docs.expo.dev/develop/development-builds/introduction
 
 If Settings shows **“FirebaseApp is not initialized”**, the native app is missing FCM setup:
 
-1. **Firebase Console** → create or open a project → add an **Android app** whose package name matches `app.json` → `android.package` (currently `com.zoneweaver.mobile`).
+1. **Firebase Console** → create or open a project → add an **Android app** whose package name matches `app.json` → `android.package` (currently `com.safezonepatrol.mobile`).
 2. Download **`google-services.json`** and save it as `Hex-Zone-Mobile/google-services.json` (see `google-services.json.example`). Then add to `app.json` under `expo.android`:
    ```json
    "googleServicesFile": "./google-services.json"

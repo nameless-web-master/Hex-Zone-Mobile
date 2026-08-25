@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "700623739728",
-    "project_id": "zoneweaver",
-    "storage_bucket": "zoneweaver.firebasestorage.app"
+    "project_number": "785583189131",
+    "project_id": "safe-zone-patrol-38ee6",
+    "storage_bucket": "safe-zone-patrol-38ee6.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:700623739728:android:e07fb72dc05ea3bb0aaa55",
+        "mobilesdk_app_id": "1:785583189131:android:748e5e572836461ea2b88e",
         "android_client_info": {
-          "package_name": "com.zoneweaver.mobile"
+          "package_name": "com.safezonepatrol.mobile"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBICnsYY4fJ-HQb67Xe3ChdqYS0meC656Q"
+          "current_key": "AIzaSyCk6rffz1FDid14mrwRBz3zQEn-bSRDUcs"
         }
       ],
       "services": {

@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:REPLACE_ME:android:REPLACE_ME",
         "android_client_info": {
-          "package_name": "com.zoneweaver.mobile"
+          "package_name": "com.safezonepatrol.mobile"
         }
       },
       "oauth_client": [],
