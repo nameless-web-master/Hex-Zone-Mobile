@@ -33,7 +33,7 @@ function formatPushRegistrationError(err: unknown): string {
     err instanceof Error ? err.message : "Push registration failed.";
   if (/FirebaseApp is not initialized/i.test(raw)) {
     const androidPackage =
-      Constants.expoConfig?.android?.package ?? "com.zoneweaver.mobile";
+      Constants.expoConfig?.android?.package ?? "com.safezonepatrol.mobile";
     return [
       "Firebase (FCM) is not configured in this Android build.",
       `Add google-services.json for package ${androidPackage}, upload an FCM service account to EAS (eas credentials), then rebuild with expo run:android or EAS Build.`,

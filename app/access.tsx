@@ -1,7 +1,8 @@
 /**
  * Public guest access landing.
  *
- * Reached via QR scan: `safezonepatrol:///access?gt=<guest-qr-token>&zid=<zone-id>`.
+ * Reached via QR scan: `https://<host>/access?gt=<guest-qr-token>&zid=<zone-id>`
+ * (App Links / Universal Links). Custom-scheme `safezonepatrol:///access?…` still works.
  * Mirrors the web flow in `Hex-Zone-Client/src/pages/GuestAccess.tsx`:
  *   1. Form → POST /api/access/permission (anonymous)
  *   2. EXPECTED      → immediately approved (came from a guest schedule)

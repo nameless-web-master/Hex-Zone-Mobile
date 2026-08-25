@@ -121,10 +121,25 @@ export type MemberInviteQrResult = MemberInviteQrToken & {
 type ExtraConfig = { webAppBaseUrl?: string; apiBaseUrl?: string };
 const expoExtra = (Constants.expoConfig?.extra ?? {}) as ExtraConfig;
 
-/** Web app origin used when the QR must encode an absolute URL but the
- *  server-issued response only contained a relative `/access?...` path. */
+const CUSTOM_SCHEME_RE =
+  /^(?:safezonepatrol|zoneweaver):\/+/i;
+
+function queryString(
+  query?: Record<string, string | undefined>,
+): string {
+  return Object.entries(query ?? {})
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+}
+
+/** HTTPS origin encoded into QR codes (camera + Chrome can open this). */
 export function webAppBaseUrl(): string {
-  const explicit = expoExtra.webAppBaseUrl?.trim();
+  const fromEnv = String(
+    (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_WEB_APP_BASE_URL) ||
+      "",
+  ).trim();
+  const explicit = fromEnv || expoExtra.webAppBaseUrl?.trim() || "";
   if (explicit) return explicit.replace(/\/+$/, "");
   return API_BASE_URL.replace(/\/+$/, "");
 }
@@ -137,39 +152,54 @@ export function appScheme(): string {
   return scheme || "safezonepatrol";
 }
 
+/** Build an HTTPS link: `https://host/<path>?<query>`. */
+export function buildHttpsAppUrl(
+  path: string,
+  query?: Record<string, string | undefined>,
+): string {
+  const cleaned = (path || "").trim().replace(/^\/+/, "");
+  const qs = queryString(query);
+  return `${webAppBaseUrl()}/${cleaned}${qs ? `?${qs}` : ""}`;
+}
+
 /** Build any deep link of the form `<scheme>:///<path>?<query>`. */
 export function buildAppDeepLink(
   path: string,
   query?: Record<string, string | undefined>,
 ): string {
   const cleaned = (path || "").trim().replace(/^\/+/, "");
-  const qs = Object.entries(query ?? {})
-    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
+  const qs = queryString(query);
   return `${appScheme()}:///${cleaned}${qs ? `?${qs}` : ""}`;
 }
 
-/** Member invite deep link encoded into the QR. */
+/** Member invite URL encoded into the QR (HTTPS so camera / Chrome work). */
 export function buildMemberInviteUrl(token: string): string {
-  return buildAppDeepLink("join", { token });
+  return buildHttpsAppUrl("join", { token });
+}
+
+function pathFromCustomScheme(url: string): string | null {
+  if (!CUSTOM_SCHEME_RE.test(url)) return null;
+  const rest = url.replace(CUSTOM_SCHEME_RE, "").replace(/^\/+/, "");
+  return rest;
 }
 
 /**
- * Convert a server-provided `/access?...` path into an app deep link.
- * Example: `/access?gt=...&zid=...` → `safezonepatrol:///access?gt=...&zid=...`
+ * Convert a server-provided `/access?...` path into an HTTPS App Link.
+ * Example: `/access?gt=...&zid=...` → `https://host/access?gt=...&zid=...`
  */
 export function toAccessDeepLink(pathWithQuery: string | null | undefined): string | null {
   const path = (pathWithQuery ?? "").trim();
   if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  const fromScheme = pathFromCustomScheme(path);
+  if (fromScheme) {
+    return `${webAppBaseUrl()}/${fromScheme}`;
+  }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path)) {
-    if (/^zoneweaver:\/\//i.test(path)) {
-      return `${appScheme()}://${path.slice("zoneweaver://".length)}`;
-    }
     return path;
   }
   const cleaned = path.startsWith("/") ? path.slice(1) : path;
-  return `${appScheme()}:///${cleaned}`;
+  return `${webAppBaseUrl()}/${cleaned}`;
 }
 
 export async function generateMemberInviteQr(payload?: {

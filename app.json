@@ -19,6 +19,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.neighbourhoodassistant.safe-zone-patrol",
+      "associatedDomains": [
+        "applinks:safe-zone-patrol-server.onrender.com"
+      ],
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification",
@@ -37,6 +40,25 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.safezonepatrol.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "safe-zone-patrol-server.onrender.com",
+              "pathPrefix": "/access"
+            },
+            {
+              "scheme": "https",
+              "host": "safe-zone-patrol-server.onrender.com",
+              "pathPrefix": "/join"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "edgeToEdgeEnabled": true,
       "permissions": [
         "CAMERA",
