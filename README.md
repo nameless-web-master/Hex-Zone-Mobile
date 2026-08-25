@@ -108,6 +108,16 @@ npm start
 
 Then press `a` for Android or `i` for iOS in the Expo CLI, or scan the QR code with Expo Go.
 
+## QR codes / App Links
+
+Guest and member-invite QRs encode **HTTPS** URLs (`https://safe-zone-patrol-server.onrender.com/access?…` and `/join?…`).
+
+- Camera / Chrome open that page.
+- If this app is installed, Android App Links / iOS Universal Links (or the landing page) open the matching screen.
+- Rebuild the native app after this change (`npx expo run:android` / EAS). Expo Go will not claim the HTTPS host.
+
+Server must serve `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association`. Set `ANDROID_SHA256_CERT_FINGERPRINTS` (Play App Signing cert) and `APPLE_TEAM_ID` so the OS verifies the links.
+
 ## Project structure
 
 ```

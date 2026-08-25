@@ -425,8 +425,8 @@ function GuestAccessSection({
         Guest access QR
       </Text>
       <Text style={{ color: colors.textDim, fontSize: 12, lineHeight: 18 }}>
-        Mints a stored guest token and embeds it in a deep link for this app.
-        Guests scan and arrive into your zone; revoke anytime.
+        Mints a stored guest token and embeds it in an https link. Camera scan
+        opens this app when it is installed (App Links), or a web page if not.
       </Text>
 
       {candidateZoneIds.length > 0 ? (

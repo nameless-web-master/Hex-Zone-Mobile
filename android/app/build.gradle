@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.zoneweaver.mobile'
+    namespace 'com.safezonepatrol.mobile'
     defaultConfig {
-        applicationId 'com.zoneweaver.mobile'
+        applicationId 'com.safezonepatrol.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

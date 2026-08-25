@@ -1,4 +1,4 @@
-package com.zoneweaver.mobile
+package com.safezonepatrol.mobile
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
