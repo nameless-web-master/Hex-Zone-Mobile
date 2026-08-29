@@ -57,9 +57,10 @@ export async function setRememberMe(remember: boolean): Promise<void> {
 export async function getRememberMe(): Promise<boolean> {
   try {
     const value = await AsyncStorage.getItem(REMEMBER_KEY);
+    if (value == null) return true;
     return value === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 

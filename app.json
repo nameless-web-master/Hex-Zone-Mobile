@@ -102,7 +102,12 @@
           "cameraPermission": "Safe Zone Patrol uses your camera to take photos for messages and your profile."
         }
       ],
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
       "expo-splash-screen",
       "expo-font",
       [

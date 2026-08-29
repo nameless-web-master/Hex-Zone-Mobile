@@ -73,6 +73,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
         <TextInput
           ref={ref}
           placeholderTextColor={colors.textDim}
+          {...rest}
           onFocus={(e) => {
             setFocused(true);
             rest.onFocus?.(e);
@@ -89,7 +90,6 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
             paddingVertical: 0,
           }}
           secureTextEntry={hidden}
-          {...rest}
         />
         {secureTextEntry ? (
           <Pressable

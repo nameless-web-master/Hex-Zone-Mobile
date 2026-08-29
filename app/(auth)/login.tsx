@@ -25,8 +25,16 @@ import {
   isDeviceSessionConflictMessage,
 } from "@/lib/deviceSync";
 import { AUTH_MAP_DEFAULT_CENTER } from "@/lib/h3";
-import { getLastEmail, getRememberMe, setLastEmail } from "@/lib/storage";
-import { getSecureCredentials } from "@/lib/secureCredentials";
+import {
+  getLastEmail,
+  getRememberMe,
+  setLastEmail,
+  setRememberMe as persistRememberMe,
+} from "@/lib/storage";
+import {
+  clearSecureCredentials,
+  getSecureCredentials,
+} from "@/lib/secureCredentials";
 import { useBottomSafeInset } from "@/hooks/useBottomSafeInset";
 import { colors } from "@/theme/colors";
 
@@ -37,6 +45,8 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
+  /** Bumped on each focus so Android remounts the password field after restore. */
+  const [passwordFieldKey, setPasswordFieldKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deviceChangePromptVisible, setDeviceChangePromptVisible] =
@@ -68,17 +78,27 @@ export default function LoginScreen() {
           setEmail(creds.email);
           setPassword(creds.password);
           setRememberMe(true);
-          return;
+        } else {
+          if (savedEmail) setEmail((prev) => prev || savedEmail);
+          setPassword("");
+          setRememberMe(savedRemember);
         }
-        if (savedEmail) setEmail(savedEmail);
-        setPassword("");
-        setRememberMe(savedRemember);
+        setPasswordFieldKey((key) => key + 1);
       })();
       return () => {
         active = false;
       };
     }, []),
   );
+
+  const onToggleRememberMe = () => {
+    setRememberMe((current) => {
+      const next = !current;
+      void persistRememberMe(next);
+      if (!next) void clearSecureCredentials();
+      return next;
+    });
+  };
 
   const center = AUTH_MAP_DEFAULT_CENTER;
 
@@ -330,17 +350,29 @@ export default function LoginScreen() {
               label="Email"
               placeholder="alex@safezonepatrol.app"
               autoCapitalize="none"
-              autoComplete="email"
+              autoComplete={Platform.OS === "android" ? "off" : "email"}
+              textContentType="username"
+              importantForAutofill={
+                Platform.OS === "android" ? "no" : "yes"
+              }
               keyboardType="email-address"
               value={email}
               onChangeText={setEmail}
               leftIcon={<Mail size={18} color={colors.textMuted} />}
             />
             <Input
+              key={`password-${passwordFieldKey}`}
               label="Password"
               placeholder="••••••••"
               secureTextEntry
-              autoComplete="password"
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              autoComplete={Platform.OS === "android" ? "off" : "password"}
+              textContentType="password"
+              importantForAutofill={
+                Platform.OS === "android" ? "no" : "yes"
+              }
               value={password}
               onChangeText={setPassword}
               leftIcon={<Lock size={18} color={colors.textMuted} />}
@@ -360,7 +392,7 @@ export default function LoginScreen() {
               }}
             >
               <Pressable
-                onPress={() => setRememberMe((s) => !s)}
+                onPress={onToggleRememberMe}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",

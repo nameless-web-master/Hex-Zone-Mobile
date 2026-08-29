@@ -55,7 +55,8 @@ import { devLog } from "@/lib/devConsole";
 import { presentLocalMessageNotification } from "@/lib/notifications";
 import {
   canAdministratorInviteUserMember,
-  MEMBER_INVITE_UNAVAILABLE_HINT,
+  memberInviteUnavailableHint,
+  normalizeAccountType,
 } from "@/lib/accountLimits";
 import { colors } from "@/theme/colors";
 
@@ -192,7 +193,13 @@ function QrPreview({ value, label }: { value: string | null; label?: string }) {
   );
 }
 
-function MemberInviteSection({ disabled }: { disabled: boolean }) {
+function MemberInviteSection({
+  disabled,
+  unavailableHint,
+}: {
+  disabled: boolean;
+  unavailableHint: string;
+}) {
   const [hours, setHours] = useState<ExpiryHours>(24);
   const [generated, setGenerated] = useState<{
     token: string;
@@ -280,8 +287,8 @@ function MemberInviteSection({ disabled }: { disabled: boolean }) {
         fullWidth
       />
       {disabled ? (
-        <Text style={{ color: colors.textDim, fontSize: 11 }}>
-          {MEMBER_INVITE_UNAVAILABLE_HINT}
+        <Text style={{ color: colors.warning, fontSize: 12, lineHeight: 18 }}>
+          {unavailableHint}
         </Text>
       ) : null}
     </Card>
@@ -712,6 +719,11 @@ export default function AccessScreen() {
     }
   }, [params.gt, params.tab, params.mode]);
 
+  const accountType = useMemo(
+    () => normalizeAccountType(user?.accountType, user?.account_type),
+    [user?.accountType, user?.account_type],
+  );
+
   const memberInviteDisabled = useMemo(
     () =>
       !canAdministratorInviteUserMember({
@@ -721,6 +733,17 @@ export default function AccessScreen() {
       }),
     [user],
   );
+
+  const memberInviteHint = useMemo(
+    () => memberInviteUnavailableHint(accountType),
+    [accountType],
+  );
+
+  useEffect(() => {
+    if (memberInviteDisabled) {
+      setTab("guest");
+    }
+  }, [memberInviteDisabled]);
 
   const loadRequests = useCallback(async () => {
     if (!effectiveZoneId) return;
@@ -849,7 +872,10 @@ export default function AccessScreen() {
 
           <View style={{ paddingHorizontal: 20, gap: 16 }}>
             {tab === "member" ? (
-              <MemberInviteSection disabled={memberInviteDisabled} />
+              <MemberInviteSection
+                disabled={memberInviteDisabled}
+                unavailableHint={memberInviteHint}
+              />
             ) : (
               <>
                 <NetworkAccessSection zoneId={effectiveZoneId} />
