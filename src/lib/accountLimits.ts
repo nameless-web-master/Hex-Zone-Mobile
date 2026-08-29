@@ -39,9 +39,8 @@ export function getDeviceLimit(type: NormalizedAccountType): number {
 /** Members allowed per account. `Infinity` means unbounded. */
 export function getMemberLimit(type: NormalizedAccountType): number {
   // Private supports many users sharing the same zone type.
-  // Exclusive is solo (admin + 1 invited user).
-  if (type === "EXCLUSIVE") return 2;
-  if (type === "ENHANCED") return 1;
+  // Exclusive and Enhanced are solo (administrator only).
+  if (type === "EXCLUSIVE" || type === "ENHANCED") return 1;
   return Number.POSITIVE_INFINITY;
 }
 
@@ -80,7 +79,19 @@ export function canEditNetworkId(params: {
 }
 
 export const MEMBER_INVITE_UNAVAILABLE_HINT =
-  "Member invite QR is available to administrators on Private, Private+, Exclusive, and Enhanced+ accounts. Enhanced accounts are solo and cannot invite members.";
+  "Member invite QR is available to administrators on Private, Private+, and Enhanced+ accounts. Exclusive and Enhanced accounts are solo and cannot invite members. Use Guest access to invite visitors.";
+
+export function memberInviteUnavailableHint(
+  type: NormalizedAccountType,
+): string {
+  if (type === "EXCLUSIVE") {
+    return "Exclusive accounts are solo (1 member per account) and cannot invite members. Use Guest access to invite visitors.";
+  }
+  if (type === "ENHANCED") {
+    return "Enhanced accounts are solo and cannot invite members. Use Guest access to invite visitors.";
+  }
+  return MEMBER_INVITE_UNAVAILABLE_HINT;
+}
 
 /** Geo types network-shared on Private+ (family) accounts. */
 export const PRIVATE_PLUS_NETWORK_SHARED_MESSAGE_TYPES = [

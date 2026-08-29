@@ -161,7 +161,7 @@ export default function SignupScreen() {
     }
     if (userOnExclusive) {
       setError(
-        "Exclusive accounts only allow 1 invited user. Ask the administrator for a QR invite instead.",
+        "Exclusive accounts are solo and cannot register additional users. Use Guest access to invite visitors.",
       );
       return;
     }

@@ -71,10 +71,13 @@ export function isSmartHomeHid(hid?: string | null): boolean {
   return Boolean(upper) && !isClientSessionHid(upper);
 }
 
-/** Whether another phone/web device currently holds the account session. */
+/**
+ * Whether another phone/web device currently holds the account session.
+ * Matches server `device_presence_is_active`: online plus a fresh last_seen.
+ */
 export function isDeviceSessionBlocking(device: DeviceRecord): boolean {
   if (!isClientSessionHid(device.hid)) return false;
-  return device.is_online === true;
+  return deriveDeviceOnline(device);
 }
 
 /** UI presence: online flag plus optional stale timeout for display. */
@@ -108,13 +111,14 @@ export async function isLocalDeviceSessionActive(
   const local = mine.find(
     (d) => String(d.hid).toUpperCase() === localHidUpper,
   );
-  const otherOnline = mine.some(
+  const otherBlocking = mine.some(
     (d) =>
       String(d.hid).toUpperCase() !== localHidUpper &&
       isDeviceSessionBlocking(d),
   );
-  if (!otherOnline) return true;
-  return local?.is_online === true;
+  if (!otherBlocking) return true;
+  if (!local) return false;
+  return deriveDeviceOnline(local);
 }
 
 function ownerDevicesForUser(
@@ -203,7 +207,7 @@ export async function syncCurrentDevice(
       return { status: "ok", deviceId: byLocalHid.id };
     }
 
-    if (!options?.forceTakeover) {
+    if (!options?.forceTakeover && !options?.resumeSession) {
       const otherOnline = mine.filter((d) => isDeviceSessionBlocking(d));
       if (otherOnline.length > 0) {
         return { status: "account-in-use" };

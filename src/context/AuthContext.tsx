@@ -55,6 +55,9 @@ import { getOrCreateDeviceHid } from "@/lib/storage";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { parseSessionRevokedSocketEvent } from "@/lib/messageSocket";
 
+/** Consecutive failed remote-session polls required before signing out. */
+const REMOTE_SIGN_OUT_STRIKES = 3;
+
 type AuthContextValue = {
   user: AuthUser | null;
   token: string | null;
@@ -274,7 +277,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         if (await isSessionInactive()) {
           devWarn("Auth: session expired due to inactivity");
-          await performLogout({ clearCredentials: true });
+          // Keep Remember Me credentials so the login form can refill.
+          await performLogout();
           return;
         }
 
@@ -378,6 +382,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const onSocketFrame = async () => {
       if (!lastMessage || wsStatus !== "open") return;
+      if (sessionInProgress.current) return;
       const evt = parseSessionRevokedSocketEvent(lastMessage);
       if (!evt) return;
       const localHid = (await getOrCreateDeviceHid()).toUpperCase();
@@ -400,25 +405,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const ownerId = String(user.id);
     let cancelled = false;
     let alerted = false;
+    let consecutiveFailures = 0;
+
+    const wsSettled = wsStatus === "open" || wsStatus === "connecting";
 
     const enforceInactivity = async (): Promise<boolean> => {
       if (!(await isSessionInactive())) return false;
       devWarn("Auth: signing out — inactivity timeout");
-      await performLogout({ clearCredentials: true });
+      // Keep Remember Me credentials so the login form can refill.
+      await performLogout();
       return true;
     };
 
-    const checkRemoteSignOut = async () => {
-      if (await enforceInactivity()) return;
-      if (wsStatus === "open") return;
-      const active = await isLocalDeviceSessionActive(ownerId);
-      if (cancelled || active) return;
-      if (!alerted) {
-        alerted = true;
-        Alert.alert("Signed out", DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE);
-      }
+    const signOutForRemoteConflict = async () => {
+      if (cancelled || alerted) return;
+      alerted = true;
+      devWarn("Auth: signing out — remote session conflict confirmed");
+      Alert.alert("Signed out", DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE);
       setAuthError(DEVICE_SIGNED_OUT_ELSEWHERE_MESSAGE);
       await performLogout();
+    };
+
+    const refreshLocalDevicePresence = async (): Promise<void> => {
+      const result = await syncCurrentDevice(user, {
+        platformLabel: "Mobile",
+        resumeSession: true,
+      });
+      if (cancelled) return;
+      if (result.status === "account-in-use") {
+        consecutiveFailures = REMOTE_SIGN_OUT_STRIKES;
+        await signOutForRemoteConflict();
+      }
+    };
+
+    const checkRemoteSignOut = async (options?: { syncFirst?: boolean }) => {
+      if (await enforceInactivity()) return;
+      if (wsSettled) {
+        consecutiveFailures = 0;
+        return;
+      }
+
+      if (options?.syncFirst) {
+        await refreshLocalDevicePresence();
+        if (cancelled || alerted) return;
+      }
+
+      let active = await isLocalDeviceSessionActive(ownerId);
+      if (cancelled || alerted) return;
+
+      if (!active && !options?.syncFirst) {
+        await refreshLocalDevicePresence();
+        if (cancelled || alerted) return;
+        active = await isLocalDeviceSessionActive(ownerId);
+      }
+
+      if (active) {
+        consecutiveFailures = 0;
+        return;
+      }
+
+      consecutiveFailures += 1;
+      devWarn("Auth: remote session check inconclusive", {
+        consecutiveFailures,
+        required: REMOTE_SIGN_OUT_STRIKES,
+      });
+      if (consecutiveFailures < REMOTE_SIGN_OUT_STRIKES) return;
+
+      await signOutForRemoteConflict();
     };
 
     const interval = setInterval(() => {
@@ -430,11 +483,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void (async () => {
         if (await enforceInactivity()) return;
         await touchLastActivity();
-        await checkRemoteSignOut();
+        consecutiveFailures = 0;
+        await checkRemoteSignOut({ syncFirst: true });
       })();
     });
 
     void touchLastActivity();
+    void checkRemoteSignOut({ syncFirst: true });
 
     return () => {
       cancelled = true;
@@ -506,7 +561,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (await isSessionInactive()) {
-          await performLogout({ clearCredentials: true });
+          await performLogout();
           return;
         }
         const restored = await trySilentReauth();
@@ -568,7 +623,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await performLogout({ clearCredentials: true });
+    const remember = await getRememberMe();
+    await performLogout({ clearCredentials: !remember });
   }, [performLogout]);
 
   const value = useMemo<AuthContextValue>(
