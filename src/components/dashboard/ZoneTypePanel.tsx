@@ -17,9 +17,13 @@ import { CompactSlider } from "@/components/dashboard/Slider";
 import type { ZoneBuilderState } from "@/hooks/useZoneBuilder";
 import { colors } from "@/theme/colors";
 
-type Props = { builder: ZoneBuilderState };
+type Props = {
+  builder: ZoneBuilderState;
+  /** Called after actions that should leave the details sheet (e.g. show on map). */
+  onShowOnMap?: () => void;
+};
 
-export function ZoneTypePanel({ builder }: Props) {
+export function ZoneTypePanel({ builder, onShowOnMap }: Props) {
   const t = builder.zoneType;
 
   if (t === "geofence") {
@@ -240,7 +244,10 @@ export function ZoneTypePanel({ builder }: Props) {
           <SecondaryButton
             label="Show cluster on map"
             icon={<Crosshair size={14} color={colors.accent} />}
-            onPress={() => builder.recenterDraft()}
+            onPress={() => {
+              builder.recenterDraft();
+              onShowOnMap?.();
+            }}
           />
         ) : null}
       </View>

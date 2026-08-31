@@ -20,12 +20,15 @@ type AppHeaderProps = {
   title: string;
   subtitle?: ReactNode;
   style?: ViewStyle;
+  /** Tighter padding/icons for overlay layouts (e.g. Zones map). */
+  compact?: boolean;
 };
 
 export function AppHeader({
   title,
   subtitle,
   style,
+  compact = false,
 }: AppHeaderProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -35,16 +38,22 @@ export function AppHeader({
 
   const displayName = (user?.name ?? "").trim() || "Account";
   const displayEmail = (user?.email ?? "").trim() || "—";
+  const sirenSize = compact ? 18 : 22;
+  const bellSize = compact ? 34 : 42;
+  const avatarSize = compact ? 32 : 40;
 
   return (
-    <View style={[styles.header, style]}>
-      <View style={styles.titleBlock}>
-        <Text style={styles.title} numberOfLines={1}>
+    <View style={[styles.header, compact && styles.headerCompact, style]}>
+      <View style={[styles.titleBlock, compact && styles.titleBlockCompact]}>
+        <Text style={[styles.title, compact && styles.titleCompact]} numberOfLines={1}>
           {title}
         </Text>
         {subtitle ? (
           typeof subtitle === "string" ? (
-            <Text style={styles.subtitle} numberOfLines={1}>
+            <Text
+              style={[styles.subtitle, compact && styles.subtitleCompact]}
+              numberOfLines={1}
+            >
               {subtitle}
             </Text>
           ) : (
@@ -53,17 +62,18 @@ export function AppHeader({
         ) : null}
       </View>
 
-      <View style={styles.actions}>
+      <View style={[styles.actions, compact && styles.actionsCompact]}>
         <Pressable
           onPress={openQuickAlerts}
           accessibilityLabel="Quick alerts"
           style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
         >
-          <Siren size={22} color={colors.accent} strokeWidth={2.2} />
+          <Siren size={sirenSize} color={colors.accent} strokeWidth={2.2} />
         </Pressable>
-        <AlertBellButton size={42} />
+        <AlertBellButton size={bellSize} />
         <ProfileAvatarButton
-          size={40}
+          size={avatarSize}
+          inset={!compact}
           selected={menuOpen}
           onPress={() => setMenuOpen(true)}
         />
@@ -178,10 +188,18 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     backgroundColor: colors.bg,
   },
+  headerCompact: {
+    paddingHorizontal: 10,
+    paddingTop: 6,
+    paddingBottom: 8,
+  },
   titleBlock: {
     flex: 1,
     minWidth: 0,
     marginRight: 12,
+  },
+  titleBlockCompact: {
+    marginRight: 6,
   },
   title: {
     color: colors.text,
@@ -189,15 +207,26 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.1,
   },
+  titleCompact: {
+    fontSize: 15,
+  },
   subtitle: {
     color: colors.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
+  subtitleCompact: {
+    fontSize: 10,
+    marginTop: 1,
+  },
   actions: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+  },
+  actionsCompact: {
+    gap: 6,
+    flexShrink: 0,
   },
   iconButton: {
     width: 42,

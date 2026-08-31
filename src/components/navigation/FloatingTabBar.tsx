@@ -203,3 +203,13 @@ export function useFloatingTabBarInset(): number {
     14
   );
 }
+
+/** Bottom offset that vertically centers controls with the compose FAB. */
+export function useFloatingFabBottom(): number {
+  const bottomInset = useBottomSafeInset();
+  return (
+    Math.max(bottomInset, 8) + 6 + FLOATING_TAB_BAR_HEIGHT + FAB_GAP_ABOVE_PILL
+  );
+}
+
+export const FLOATING_FAB_SIZE = FAB_SIZE;
