@@ -84,9 +84,15 @@ export function useZoneBuilder(
 
   // geofence / grid drawing state
   const [draftRing, setDraftRing] = useState<LatLng[]>([]);
+  /** Points removed by undo — restored by redo (cleared on new vertex). */
+  const [polygonRedoStack, setPolygonRedoStack] = useState<LatLng[]>([]);
   const [draftCircle, setDraftCircle] = useState<ZoneCircle | null>(null);
   const [selectedH3Cells, setSelectedH3Cells] = useState<string[]>([]);
-  const [h3Resolution, setH3Resolution] = useState(9);
+  /** Last H3 toggle actions — used to undo cell add/remove. */
+  const [h3UndoStack, setH3UndoStack] = useState<
+    { op: "add" | "remove"; cell: string }[]
+  >([]);
+  const [h3Resolution, setH3ResolutionState] = useState(9);
   const [geofenceTool, setGeofenceTool] = useState<"polygon" | "circle">(
     "polygon",
   );
@@ -212,8 +218,10 @@ export function useZoneBuilder(
 
   const resetDrafts = useCallback(() => {
     setDraftRing([]);
+    setPolygonRedoStack([]);
     setDraftCircle(null);
     setSelectedH3Cells([]);
+    setH3UndoStack([]);
     setProximityCenter(null);
     setObjectCenter(null);
     setObjectQuery("");
@@ -235,9 +243,37 @@ export function useZoneBuilder(
   );
 
   const toggleH3Cell = useCallback((cell: string) => {
-    setSelectedH3Cells((cells) =>
-      cells.includes(cell) ? cells.filter((c) => c !== cell) : [...cells, cell],
-    );
+    setSelectedH3Cells((cells) => {
+      const exists = cells.includes(cell);
+      setH3UndoStack((stack) => [
+        ...stack,
+        { op: exists ? "remove" : "add", cell },
+      ]);
+      return exists ? cells.filter((c) => c !== cell) : [...cells, cell];
+    });
+  }, []);
+
+  const undoH3Cell = useCallback(() => {
+    setH3UndoStack((stack) => {
+      if (!stack.length) return stack;
+      const last = stack[stack.length - 1];
+      setSelectedH3Cells((cells) => {
+        if (last.op === "add") {
+          return cells.filter((c) => c !== last.cell);
+        }
+        return cells.includes(last.cell) ? cells : [...cells, last.cell];
+      });
+      return stack.slice(0, -1);
+    });
+  }, []);
+
+  const clearH3 = useCallback(() => {
+    setSelectedH3Cells([]);
+    setH3UndoStack([]);
+  }, []);
+
+  const setH3Resolution = useCallback((next: number) => {
+    setH3ResolutionState(next);
   }, []);
 
   const clearLocationTimeout = useCallback(() => {
@@ -388,6 +424,7 @@ export function useZoneBuilder(
             }
             return [...cur, pt];
           });
+          setPolygonRedoStack([]);
           return;
         }
         // circle: first click sets center, second sets radius
@@ -997,16 +1034,33 @@ export function useZoneBuilder(
     setGeofenceTool,
     clearGeofence: () => {
       setDraftRing([]);
+      setPolygonRedoStack([]);
       setDraftCircle(null);
     },
-    undoGeofencePoint: () =>
-      setDraftRing((cur) => (cur.length ? cur.slice(0, -1) : cur)),
+    undoGeofencePoint: () => {
+      setDraftRing((cur) => {
+        if (!cur.length) return cur;
+        const removed = cur[cur.length - 1];
+        setPolygonRedoStack((stack) => [...stack, removed]);
+        return cur.slice(0, -1);
+      });
+    },
+    redoGeofencePoint: () => {
+      setPolygonRedoStack((stack) => {
+        if (!stack.length) return stack;
+        const next = stack[stack.length - 1];
+        setDraftRing((cur) => [...cur, next]);
+        return stack.slice(0, -1);
+      });
+    },
+    canRedoGeofencePoint: polygonRedoStack.length > 0,
     finishGeofencePolygon: () => {
       setDraftRing((cur) => {
         if (cur.length < 3) return cur;
         if (isClosedPolygon(cur)) return cur;
         return [...cur, cur[0]];
       });
+      setPolygonRedoStack([]);
     },
 
     // proximity
@@ -1061,7 +1115,9 @@ export function useZoneBuilder(
     setObjectRadius,
 
     // grid
-    clearH3: () => setSelectedH3Cells([]),
+    clearH3,
+    undoH3Cell,
+    canUndoH3: h3UndoStack.length > 0,
 
     // save status
     saving,

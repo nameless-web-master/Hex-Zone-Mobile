@@ -37,8 +37,20 @@ export function buildDashboardMapHtml(): string {
     .leaflet-container { background: #E6ECF3 !important; }
     .leaflet-control-attribution { font-size: 9px; background: rgba(255,255,255,0.75); color: #566784; }
     .leaflet-control-attribution a { color: ${ACCENT}; }
-    .leaflet-control-zoom { border: none !important; }
-    .leaflet-control-zoom a { background: rgba(255,255,255,0.92) !important; color: #0F2C5C !important; border: 1px solid rgba(15,44,92,0.12) !important; }
+    /* Clear status bar + Zones List / header row so +/- isn’t covered */
+    .leaflet-top.leaflet-left {
+      top: 96px;
+      left: 10px;
+    }
+    .leaflet-control-zoom {
+      border: none !important;
+      margin-top: 0 !important;
+    }
+    .leaflet-control-zoom a {
+      background: rgba(255,255,255,0.92) !important;
+      color: #0F2C5C !important;
+      border: 1px solid rgba(15,44,92,0.12) !important;
+    }
   </style>
 </head>
 <body>
