@@ -81,7 +81,7 @@ export function ZonesPageHeader({
           onPress={() => setListOpen((v) => !v)}
           accessibilityRole="button"
           accessibilityLabel="Zones list"
-          style={[styles.sideBtn, { borderWidth: 0, padding: 0 }]}
+          style={[styles.sideBtn, { borderWidth: 0, paddingHorizontal: 0 }]}
         >
           <Text style={styles.listBtnText} numberOfLines={1}>
             Zones
@@ -189,8 +189,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 8,
+    gap: 4,
+    paddingHorizontal: 6,
   },
   sideBtn: {
     flexDirection: "row",

@@ -53,6 +53,8 @@ type DashboardMapProps = {
   onDeviceLocationError?: (message: string) => void;
   onReady?: () => void;
   style?: ViewStyle;
+  /** Distance from top of map WebView to Leaflet +/- control (px). */
+  zoomControlTop?: number;
 };
 
 export function DashboardMap({
@@ -77,11 +79,15 @@ export function DashboardMap({
   onDeviceLocationError,
   onReady,
   style,
+  zoomControlTop = 96,
 }: DashboardMapProps) {
   const webRef = useRef<WebView>(null);
   const readyRef = useRef(false);
   const pendingLocationNonceRef = useRef(0);
-  const html = useMemo(() => buildDashboardMapHtml(), []);
+  const html = useMemo(
+    () => buildDashboardMapHtml(zoomControlTop),
+    [zoomControlTop],
+  );
 
   const injectDeviceLocationRequest = useCallback(() => {
     webRef.current?.injectJavaScript(
