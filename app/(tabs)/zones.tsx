@@ -1,6 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import {
   ChevronDown,
   ChevronUp,
@@ -35,9 +38,12 @@ const H3_RES_MIN = 5;
 const H3_RES_MAX = 13;
 const PROXIMITY_RADIUS_MIN = 10;
 const PROXIMITY_RADIUS_MAX = 5000;
+/** Compact Zones header row (card + side buttons), excluding safe-area inset. */
+const ZONES_HEADER_BODY_HEIGHT = 58;
 
 export default function DashboardScreen() {
   const { ownerZoneId, user } = useAuth();
+  const insets = useSafeAreaInsets();
   const builder = useZoneBuilder(ownerZoneId || undefined, {
     currentUserId: user?.id != null ? String(user.id) : undefined,
     isAccountAdministrator:
@@ -45,6 +51,14 @@ export default function DashboardScreen() {
   });
 
   const fabBottom = useFloatingFabBottom();
+
+  /** Keep map chrome below the floating Zones header (iOS needs more offset). */
+  const zonesHeaderBottom =
+    insets.top + 6 + ZONES_HEADER_BODY_HEIGHT;
+  const mapChromeTop =
+    Platform.OS === "ios" ? zonesHeaderBottom + 14 : 96;
+  const hintTop =
+    Platform.OS === "ios" ? zonesHeaderBottom + 10 : 100;
 
   /** Zone-type dock collapsed by default (arrow-down only). */
   const [toolsExpanded, setToolsExpanded] = useState(false);
@@ -220,6 +234,7 @@ export default function DashboardScreen() {
         draftCircleSolid={builder.draftCircleSolid}
         fitDraftToken={builder.fitDraftToken}
         locationRequestNonce={builder.locationRequestNonce}
+        zoomControlTop={mapChromeTop}
         onMapClick={builder.handleMapClick}
         onH3Toggle={builder.toggleH3Cell}
         onDeviceLocation={builder.applyDeviceLocation}
@@ -255,7 +270,7 @@ export default function DashboardScreen() {
           pointerEvents="none"
           style={{
             position: "absolute",
-            top: 100,
+            top: hintTop,
             alignSelf: "center",
             left: 72,
             right: 72,

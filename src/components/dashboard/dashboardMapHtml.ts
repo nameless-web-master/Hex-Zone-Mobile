@@ -25,7 +25,7 @@ export type DashboardMapState = {
 const ACCENT = "#2F80ED";
 const DRAFT = "#FFD83D";
 
-export function buildDashboardMapHtml(): string {
+export function buildDashboardMapHtml(zoomControlTop = 96): string {
   return `<!doctype html>
 <html>
 <head>
@@ -37,9 +37,9 @@ export function buildDashboardMapHtml(): string {
     .leaflet-container { background: #E6ECF3 !important; }
     .leaflet-control-attribution { font-size: 9px; background: rgba(255,255,255,0.75); color: #566784; }
     .leaflet-control-attribution a { color: ${ACCENT}; }
-    /* Clear status bar + Zones List / header row so +/- isn’t covered */
+    /* Clear status bar + Zones header so +/- isn't covered */
     .leaflet-top.leaflet-left {
-      top: 96px;
+      top: ${zoomControlTop}px;
       left: 10px;
     }
     .leaflet-control-zoom {
