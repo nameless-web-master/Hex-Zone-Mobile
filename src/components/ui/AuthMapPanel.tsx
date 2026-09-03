@@ -53,9 +53,8 @@ function buildHtml(
         var radius = ${h3Radius};
         var map = L.map('map', { zoomControl: false, attributionControl: true })
           .setView([lat, lng], 12);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-          attribution: '&copy; OSM &copy; CARTO',
-          subdomains: 'abcd',
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap',
           maxZoom: 19
         }).addTo(map);
 

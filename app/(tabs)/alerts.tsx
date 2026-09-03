@@ -26,8 +26,9 @@ import {
 import { wellnessResponseTrackingEnabled } from "@/lib/messageWorkflow";
 import { WellnessAckInline } from "@/components/messages/WellnessAckInline";
 import { useZoneNameLookup } from "@/hooks/useZoneNameLookup";
+import { useEnsureFilteredInboxRows } from "@/hooks/useEnsureFilteredInboxRows";
 import { useMemberPresence } from "@/hooks/useMemberPresence";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { colors } from "@/theme/colors";
 
 type OwnerNameMap = Record<number, string>;
@@ -42,7 +43,17 @@ export default function AlertsScreen() {
     `${user?.first_name ?? ""} ${user?.last_name ?? ""}`.trim();
   const selfBroadcastName = resolveBroadcastName(selfRealName || user?.name);
   const ownerId = user?.id != null ? Number(user.id) : null;
-  const { alarmMessages, loading, error, refresh, markAlarmsSeen } = useAlarmInbox();
+  const {
+    alarmMessages,
+    loading,
+    loadingMore,
+    hasMore,
+    error,
+    refresh,
+    loadMore,
+    markAlarmsSeen,
+    pageSize,
+  } = useAlarmInbox();
   const { zoneNames } = useZoneNameLookup();
   const [ownerNames, setOwnerNames] = useState<OwnerNameMap>({});
   const [ownerAvatars, setOwnerAvatars] = useState<OwnerAvatarMap>({});
@@ -123,6 +134,21 @@ export default function AlertsScreen() {
     [filtered],
   );
 
+  useEnsureFilteredInboxRows({
+    filteredCount: sorted.length,
+    pageSize,
+    hasMore,
+    loading,
+    loadingMore,
+    loadMore,
+    filterKey: `${zoneFilter}|${typeFilter}|${dateFrom}|${dateTo}|${search}`,
+  });
+
+  const onEndReached = useCallback(() => {
+    if (!hasMore || loading || loadingMore) return;
+    void loadMore();
+  }, [hasMore, loading, loadingMore, loadMore]);
+
   return (
     <GradientBackground>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -173,9 +199,15 @@ export default function AlertsScreen() {
             data={sorted}
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
+            initialNumToRender={8}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
+            onEndReached={onEndReached}
+            onEndReachedThreshold={0.4}
             refreshControl={
               <RefreshControl
-                refreshing={loading}
+                refreshing={loading && !loadingMore}
                 onRefresh={() => void refresh()}
                 tintColor={colors.accent}
               />
@@ -199,12 +231,21 @@ export default function AlertsScreen() {
                 onDateToChange={setDateTo}
               />
             }
+            ListFooterComponent={
+              loadingMore ? (
+                <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                  <ActivityIndicator color={colors.accent} />
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
-              <Card>
-                <Text style={{ color: colors.textMuted, textAlign: "center" }}>
-                  No incoming alarms.
-                </Text>
-              </Card>
+              loading || loadingMore ? null : (
+                <Card>
+                  <Text style={{ color: colors.textMuted, textAlign: "center" }}>
+                    No incoming alarms.
+                  </Text>
+                </Card>
+              )
             }
             renderItem={({ item }) => {
               const broadcast = messageBroadcastLabel(item, {

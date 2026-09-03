@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { MessageSquare } from "lucide-react-native";
 import { GradientBackground } from "@/components/ui/GradientBackground";
 import { AppHeader } from "@/components/ui/AppHeader";
@@ -17,6 +17,7 @@ import { MessageInboxFilterBar } from "@/components/messages/MessageInboxFilterB
 import { InboxMessageCard } from "@/components/messages/InboxMessageCard";
 import { WellnessAckInline } from "@/components/messages/WellnessAckInline";
 import { useMessagesFeed } from "@/hooks/useMessagesFeed";
+import { useEnsureFilteredInboxRows } from "@/hooks/useEnsureFilteredInboxRows";
 import { useZoneNameLookup } from "@/hooks/useZoneNameLookup";
 import { useNotifications } from "@/context/NotificationContext";
 import { useAuth } from "@/context/AuthContext";
@@ -179,10 +180,14 @@ export default function MessagesScreen() {
   const {
     messages,
     loading,
+    loadingMore,
+    hasMore,
     error,
     refresh,
+    loadMore,
     ownerId,
     wsStatus,
+    pageSize,
   } = useMessagesFeed();
   const { zoneNames } = useZoneNameLookup();
   const { pushToken, permissionError } = useNotifications();
@@ -247,6 +252,21 @@ export default function MessagesScreen() {
       }),
     [messages, zoneFilter, typeFilter, dateFrom, dateTo, search],
   );
+
+  useEnsureFilteredInboxRows({
+    filteredCount: filtered.length,
+    pageSize,
+    hasMore,
+    loading,
+    loadingMore,
+    loadMore,
+    filterKey: `${zoneFilter}|${typeFilter}|${dateFrom}|${dateTo}|${search}`,
+  });
+
+  const onEndReached = useCallback(() => {
+    if (!hasMore || loading || loadingMore) return;
+    void loadMore();
+  }, [hasMore, loading, loadingMore, loadMore]);
 
   // Load members once so inbox rows can resolve a friendly name / avatar for
   // senders that did not embed a broadcast name.
@@ -331,6 +351,12 @@ export default function MessagesScreen() {
               paddingHorizontal: 20,
               paddingBottom: 130,
             }}
+            initialNumToRender={8}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
+            onEndReached={onEndReached}
+            onEndReachedThreshold={0.4}
             ListHeaderComponent={
               <View>
                 <MessageInboxFilterBar
@@ -358,17 +384,26 @@ export default function MessagesScreen() {
             }
             refreshControl={
               <RefreshControl
-                refreshing={loading}
+                refreshing={loading && !loadingMore}
                 onRefresh={() => void refresh()}
                 tintColor={colors.accent}
               />
             }
+            ListFooterComponent={
+              loadingMore ? (
+                <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                  <ActivityIndicator color={colors.accent} />
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
-              <Card>
-                <Text style={{ color: colors.textMuted, textAlign: "center" }}>
-                  No messages yet. Tap + to compose a message.
-                </Text>
-              </Card>
+              loading || loadingMore ? null : (
+                <Card>
+                  <Text style={{ color: colors.textMuted, textAlign: "center" }}>
+                    No messages yet. Tap + to compose a message.
+                  </Text>
+                </Card>
+              )
             }
           />
         )}

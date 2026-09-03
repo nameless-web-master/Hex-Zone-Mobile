@@ -23,6 +23,8 @@ import { isRunningExpoGo } from "@/lib/pushSupport";
 import { useWebSocket } from "./useWebSocket";
 
 const POLL_INTERVAL_MS = 30_000;
+/** First paint + each scroll page for Home / Incoming Alarms. */
+export const INBOX_PAGE_SIZE = 10;
 
 function sortByNewest(list: Message[]) {
   return [...list].sort(
@@ -37,12 +39,27 @@ function mergeSortedInbox(batch: Message[]): Message[] {
   return sortByNewest(batch);
 }
 
-export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }) {
+function mergeUniqueById(existing: Message[], incoming: Message[]): Message[] {
+  if (incoming.length === 0) return existing;
+  const seen = new Set(existing.map((row) => row.id));
+  const appended = incoming.filter((row) => !seen.has(row.id));
+  if (appended.length === 0) return existing;
+  return mergeSortedInbox([...existing, ...appended]);
+}
+
+export function useMessagesFeed(options?: {
+  limit?: number;
+  pageSize?: number;
+  zoneIds?: string[];
+}) {
   const { user, token, ownerZoneId } = useAuth();
   const { lastNotification } = useNotifications();
+  const pageSize = options?.pageSize ?? options?.limit ?? INBOX_PAGE_SIZE;
   const [messages, setMessages] = useState<Message[]>([]);
   const [blockRules, setBlockRules] = useState<MessageFeatureBlock[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const ownerId = useMemo(() => {
@@ -71,9 +88,13 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
     blockRulesRef.current = blockRules;
   }, [blockRules]);
 
+  /** How many rows we last asked the API for in the loaded window (skip offset). */
+  const fetchedCountRef = useRef(0);
+
   const inboxHydratedOnceRef = useRef(false);
   const seenInboxIdsRef = useRef<Set<string>>(new Set());
   const refetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadMoreInFlightRef = useRef(false);
 
   const applyInboxBatch = useCallback((batch: Message[], blocks: MessageFeatureBlock[]) => {
     const visible = filterMessagesForBlocks(batch, blocks);
@@ -108,52 +129,104 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
     [ownerId, prependInboxMessage, fallbackZoneId],
   );
 
-  const hydrateInbox = useCallback(async () => {
-    if (ownerId == null || !token) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [messagesResult, blocksResult] = await Promise.all([
-        listMessages({
-          owner_id: ownerId,
-          skip: 0,
-          limit: options?.limit ?? 100,
-        }),
-        listMessageFeatureBlocks(),
-      ]);
-      // Auth gone: AuthContext will redirect to login; do not surface error.
-      if (messagesResult.unauthorized || blocksResult.unauthorized) return;
-      const rules = blocksResult.error
-        ? blockRulesRef.current
-        : (blocksResult.data ?? []);
-      if (!blocksResult.error) {
-        setBlockRules(rules);
+  const trackNewRowsForNotify = useCallback(
+    (batch: Message[]) => {
+      if (ownerId == null) return;
+      for (const row of batch) {
+        if (seenInboxIdsRef.current.has(row.id)) continue;
+        seenInboxIdsRef.current.add(row.id);
+        if (inboxHydratedOnceRef.current) {
+          void notifyIncomingInboxMessage(row, ownerId);
+        }
       }
+      inboxHydratedOnceRef.current = true;
+    },
+    [ownerId],
+  );
+
+  /**
+   * Reset or refresh the loaded window.
+   * - `reset`: first page only (pull-to-refresh / owner change)
+   * - `refresh`: re-fetch everything currently loaded (poll / socket reconcile)
+   */
+  const hydrateInbox = useCallback(
+    async (mode: "reset" | "refresh" = "refresh") => {
+      if (ownerId == null || !token) return;
+      setLoading(true);
+      setError(null);
+      const limit =
+        mode === "reset"
+          ? pageSize
+          : Math.max(pageSize, fetchedCountRef.current || pageSize);
+      try {
+        const [messagesResult, blocksResult] = await Promise.all([
+          listMessages({
+            owner_id: ownerId,
+            skip: 0,
+            limit,
+          }),
+          listMessageFeatureBlocks(),
+        ]);
+        // Auth gone: AuthContext will redirect to login; do not surface error.
+        if (messagesResult.unauthorized || blocksResult.unauthorized) return;
+        const rules = blocksResult.error
+          ? blockRulesRef.current
+          : (blocksResult.data ?? []);
+        if (!blocksResult.error) {
+          setBlockRules(rules);
+        }
+        if (messagesResult.error) {
+          setError(messagesResult.error);
+          return;
+        }
+        const batch = messagesResult.data ?? [];
+        fetchedCountRef.current = batch.length;
+        applyInboxBatch(batch, rules);
+        setHasMore(batch.length >= limit);
+        trackNewRowsForNotify(batch);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [ownerId, token, pageSize, applyInboxBatch, trackNewRowsForNotify],
+  );
+
+  const loadMore = useCallback(async () => {
+    if (ownerId == null || !token) return;
+    if (!hasMore || loading || loadMoreInFlightRef.current) return;
+    loadMoreInFlightRef.current = true;
+    setLoadingMore(true);
+    setError(null);
+    const skip = fetchedCountRef.current;
+    try {
+      const messagesResult = await listMessages({
+        owner_id: ownerId,
+        skip,
+        limit: pageSize,
+      });
+      if (messagesResult.unauthorized) return;
       if (messagesResult.error) {
         setError(messagesResult.error);
         return;
       }
       const batch = messagesResult.data ?? [];
-      applyInboxBatch(batch, rules);
-      if (ownerId != null) {
-        for (const row of batch) {
-          if (seenInboxIdsRef.current.has(row.id)) continue;
-          seenInboxIdsRef.current.add(row.id);
-          if (inboxHydratedOnceRef.current) {
-            void notifyIncomingInboxMessage(row, ownerId);
-          }
-        }
-        inboxHydratedOnceRef.current = true;
-      }
+      fetchedCountRef.current = skip + batch.length;
+      setHasMore(batch.length >= pageSize);
+      if (batch.length === 0) return;
+      const blocks = blockRulesRef.current;
+      const visible = filterMessagesForBlocks(batch, blocks);
+      trackNewRowsForNotify(batch);
+      setMessages((prev) => mergeUniqueById(prev, visible));
     } finally {
-      setLoading(false);
+      loadMoreInFlightRef.current = false;
+      setLoadingMore(false);
     }
-  }, [ownerId, token, options?.limit, applyInboxBatch]);
+  }, [ownerId, token, hasMore, loading, pageSize, trackNewRowsForNotify]);
 
   const scheduleInboxRefetchFromSocket = useCallback(() => {
     if (refetchDebounceRef.current) clearTimeout(refetchDebounceRef.current);
     refetchDebounceRef.current = setTimeout(() => {
-      void hydrateInbox();
+      void hydrateInbox("refresh");
     }, 400);
   }, [hydrateInbox]);
 
@@ -207,19 +280,21 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
   useEffect(() => {
     inboxHydratedOnceRef.current = false;
     seenInboxIdsRef.current.clear();
+    setHasMore(true);
+    fetchedCountRef.current = 0;
   }, [ownerId]);
 
   useEffect(() => {
-    void hydrateInbox();
+    void hydrateInbox("reset");
   }, [hydrateInbox]);
 
   useEffect(() => {
     if (!lastNotification) return;
-    void hydrateInbox();
+    void hydrateInbox("refresh");
   }, [lastNotification, hydrateInbox]);
 
   useEffect(() => {
-    if (wsStatus === "open") void hydrateInbox();
+    if (wsStatus === "open") void hydrateInbox("refresh");
   }, [wsStatus, hydrateInbox]);
 
   useEffect(() => {
@@ -227,7 +302,7 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
     if (ownerId == null || !token) return;
     const pollMs = isRunningExpoGo() ? 30_000 : POLL_INTERVAL_MS;
     const interval = setInterval(() => {
-      void hydrateInbox();
+      void hydrateInbox("refresh");
     }, pollMs);
     return () => clearInterval(interval);
   }, [ownerId, token, hydrateInbox, wsStatus]);
@@ -238,14 +313,20 @@ export function useMessagesFeed(options?: { limit?: number; zoneIds?: string[] }
     };
   }, []);
 
+  const refresh = useCallback(() => hydrateInbox("reset"), [hydrateInbox]);
+
   return {
     messages,
     loading,
+    loadingMore,
+    hasMore,
     error,
-    refresh: hydrateInbox,
+    refresh,
+    loadMore,
     applyGeoPropagationToInbox,
     ownerId,
     zoneId: accountZoneId || null,
     wsStatus: wsEnabled ? wsStatus : ("closed" as const),
+    pageSize,
   };
 }

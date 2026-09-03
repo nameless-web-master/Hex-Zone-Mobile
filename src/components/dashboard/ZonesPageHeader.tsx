@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronDown, Save, Trash2 } from "lucide-react-native";
 import { AppHeader } from "@/components/ui/AppHeader";
-import { summarizeZone, type MapZoneLayer } from "@/lib/zoneGeometry";
+import { summarizeZone, zoneOwnerLabel, type MapZoneLayer } from "@/lib/zoneGeometry";
 import { colors } from "@/theme/colors";
 
 type Props = {
@@ -129,6 +129,7 @@ export function ZonesPageHeader({
             >
               {layers.map((layer) => {
                 const summary = summarizeZone(layer.raw);
+                const owner = zoneOwnerLabel(layer.raw);
                 return (
                   <View key={layer.id} style={styles.layerRow}>
                     <View
@@ -147,6 +148,11 @@ export function ZonesPageHeader({
                       <Text style={styles.rowMeta} numberOfLines={1}>
                         {summary || layer.zoneType.replace("_", " ")}
                       </Text>
+                      {owner ? (
+                        <Text style={styles.rowOwner} numberOfLines={1}>
+                          {owner}
+                        </Text>
+                      ) : null}
                     </Pressable>
                     <Pressable
                       onPress={() => onDeleteLayer(layer)}
@@ -301,5 +307,11 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     fontSize: 11,
     marginTop: 2,
+  },
+  rowOwner: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: "600",
   },
 });

@@ -20,6 +20,9 @@ export type DashboardMapState = {
   draftCircleSolid?: boolean;
   /** Auto-fit the map to this token; bumps to re-trigger the fit. */
   fitDraftToken?: number;
+  /** When bumped with focusLayerId, fit the map to that saved layer (incl. H3). */
+  focusLayerToken?: number;
+  focusLayerId?: string | null;
 };
 
 const ACCENT = "#2F80ED";
@@ -105,9 +108,10 @@ export function buildDashboardMapHtml(zoomControlTop = 96): string {
       ensureH3Loaded(function (lib) {
         H3 = lib;
         if (state) {
-          // h3-js arrived after the first state push: allow the pending fit to
-          // re-run now that cell boundaries can be computed.
+          // h3-js arrived after the first state push: allow the pending fit /
+          // focus to re-run now that cell boundaries can be computed.
           lastFitToken = 0;
+          lastFocusToken = 0;
           applyState(state);
         }
       });
@@ -301,7 +305,43 @@ export function buildDashboardMapHtml(zoomControlTop = 96): string {
         }
       }
 
+      function boundsForSavedLayer(layer) {
+        if (!layer) return null;
+        var pts = [];
+        var lib = H3 || getH3();
+        (layer.rings || []).forEach(function (ring) {
+          (ring || []).forEach(function (p) { pts.push([p[0], p[1]]); });
+        });
+        (layer.circles || []).forEach(function (c) {
+          if (!c || !c.center || !(Number(c.radiusMeters) > 0)) return;
+          try {
+            var circleBounds = L.latLng(c.center[0], c.center[1]).toBounds(
+              Math.max(Number(c.radiusMeters) * 2.2, 120)
+            );
+            pts.push([circleBounds.getSouthWest().lat, circleBounds.getSouthWest().lng]);
+            pts.push([circleBounds.getNorthEast().lat, circleBounds.getNorthEast().lng]);
+          } catch (e) {
+            pts.push([c.center[0], c.center[1]]);
+          }
+        });
+        if (lib && typeof lib.cellToBoundary === 'function') {
+          (layer.h3Cells || []).forEach(function (cell) {
+            try {
+              lib.cellToBoundary(cell).forEach(function (p) { pts.push([p[0], p[1]]); });
+            } catch (e) {}
+          });
+        }
+        if (layer.marker) pts.push([layer.marker[0], layer.marker[1]]);
+        if (!pts.length) return null;
+        try {
+          return L.latLngBounds(pts);
+        } catch (e) {
+          return null;
+        }
+      }
+
       var lastFitToken = 0;
+      var lastFocusToken = 0;
       function applyState(next) {
         if (!map) return;
         var prev = state;
@@ -331,6 +371,22 @@ export function buildDashboardMapHtml(zoomControlTop = 96): string {
           renderDraftMarker(next.draftMarker, color);
         }
         renderH3Draft(next.selectedH3Cells || [], color);
+
+        if (next.focusLayerToken && next.focusLayerToken !== lastFocusToken) {
+          lastFocusToken = next.focusLayerToken;
+          try {
+            var focusId = next.focusLayerId != null ? String(next.focusLayerId) : '';
+            var focusLayer = (next.savedLayers || []).find(function (layer) {
+              return String(layer.id) === focusId;
+            });
+            var focusBounds = boundsForSavedLayer(focusLayer);
+            if (focusBounds && focusBounds.isValid()) {
+              map.fitBounds(focusBounds, { padding: [48, 48], maxZoom: 17, animate: true });
+            }
+          } catch (e) {
+            debug('focus-layer-error', { err: String(e && e.message || e) });
+          }
+        }
 
         if (next.fitDraftToken && next.fitDraftToken !== lastFitToken) {
           lastFitToken = next.fitDraftToken;
@@ -382,9 +438,8 @@ export function buildDashboardMapHtml(zoomControlTop = 96): string {
       function initMap() {
         map = L.map('map', { zoomControl: true, attributionControl: true })
           .setView([40.7527, -73.9772], 13);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-          attribution: '&copy; OSM &copy; CARTO',
-          subdomains: 'abcd',
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap',
           maxZoom: 19
         }).addTo(map);
 
@@ -415,6 +470,9 @@ export function buildDashboardMapHtml(zoomControlTop = 96): string {
           post({ type: 'mapClick', lat: lat, lng: lng });
         }
         map.on('click', handleTap);
+        map.on('dragend', function () {
+          post({ type: 'userMovedMap' });
+        });
 
         post({ type: 'ready' });
       }

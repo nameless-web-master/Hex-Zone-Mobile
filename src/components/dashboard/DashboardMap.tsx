@@ -28,6 +28,7 @@ type Message =
       accuracy?: number;
     }
   | { type: "locationError"; message: string }
+  | { type: "userMovedMap" }
   | { type: "debug"; label: string; payload: unknown };
 
 type DashboardMapProps = {
@@ -44,6 +45,9 @@ type DashboardMapProps = {
   draftColor: string;
   draftCircleSolid?: boolean;
   fitDraftToken?: number;
+  /** Bump with focusLayerId to fly the map to a saved zone (works for H3 grids). */
+  focusLayerToken?: number;
+  focusLayerId?: string | null;
   /** Increment to request device GPS via the map WebView (no expo-location native module). */
   locationRequestNonce?: number;
   onMapClick?: (lat: number, lng: number) => void;
@@ -51,6 +55,7 @@ type DashboardMapProps = {
   onH3LoadError?: () => void;
   onDeviceLocation?: (lat: number, lng: number, accuracy?: number) => void;
   onDeviceLocationError?: (message: string) => void;
+  onUserMovedMap?: () => void;
   onReady?: () => void;
   style?: ViewStyle;
   /** Distance from top of map WebView to Leaflet +/- control (px). */
@@ -71,12 +76,15 @@ export function DashboardMap({
   draftColor,
   draftCircleSolid = false,
   fitDraftToken = 0,
+  focusLayerToken = 0,
+  focusLayerId = null,
   locationRequestNonce = 0,
   onMapClick,
   onH3Toggle,
   onH3LoadError,
   onDeviceLocation,
   onDeviceLocationError,
+  onUserMovedMap,
   onReady,
   style,
   zoomControlTop = 96,
@@ -110,6 +118,8 @@ export function DashboardMap({
       draftColor,
       draftCircleSolid,
       fitDraftToken,
+      focusLayerToken,
+      focusLayerId,
     }),
     [
       center,
@@ -125,6 +135,8 @@ export function DashboardMap({
       draftColor,
       draftCircleSolid,
       fitDraftToken,
+      focusLayerToken,
+      focusLayerId,
     ],
   );
 
@@ -179,6 +191,10 @@ export function DashboardMap({
           onDeviceLocationError?.(data.message);
           return;
         }
+        if (data.type === "userMovedMap") {
+          onUserMovedMap?.();
+          return;
+        }
         if (data.type === "debug") {
           if (__DEV__) {
             console.log("[DashboardMap]", data.label, data.payload);
@@ -192,6 +208,7 @@ export function DashboardMap({
       mapState,
       onDeviceLocation,
       onDeviceLocationError,
+      onUserMovedMap,
       onH3LoadError,
       onH3Toggle,
       onMapClick,

@@ -31,7 +31,7 @@ import {
 } from "@/components/navigation/FloatingTabBar";
 import { useAuth } from "@/context/AuthContext";
 import { MAX_ZONE_NAME_LENGTH, useZoneBuilder } from "@/hooks/useZoneBuilder";
-import { isClosedPolygon, type MapZoneLayer } from "@/lib/zoneGeometry";
+import { isClosedPolygon, layerFocusPoint, type MapZoneLayer } from "@/lib/zoneGeometry";
 import { colors } from "@/theme/colors";
 
 const H3_RES_MIN = 5;
@@ -46,6 +46,7 @@ export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const builder = useZoneBuilder(ownerZoneId || undefined, {
     currentUserId: user?.id != null ? String(user.id) : undefined,
+    currentUserName: user?.name?.trim() || undefined,
     isAccountAdministrator:
       String(user?.role ?? "").toLowerCase() === "administrator",
   });
@@ -65,6 +66,8 @@ export default function DashboardScreen() {
   /** Null until the user picks a draw tool — then map drawing is enabled. */
   const [activeTool, setActiveTool] = useState<ZoneDrawToolId | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [focusLayerId, setFocusLayerId] = useState<string | null>(null);
+  const [focusLayerToken, setFocusLayerToken] = useState(0);
 
   const { zoneType, changeZoneType, setGeofenceTool } = builder;
 
@@ -183,12 +186,14 @@ export default function DashboardScreen() {
 
   const handleSelectLayer = useCallback(
     (layer: MapZoneLayer) => {
-      const target =
-        layer.rings[0]?.[0] ??
-        layer.circles[0]?.center ??
-        layer.marker ??
-        builder.mapCenter;
-      builder.setMapCenter(target);
+      const target = layerFocusPoint(layer);
+      builder.markMapUserAdjusted();
+      if (target) {
+        builder.setMapCenter(target);
+      }
+      // Always fit via the map WebView so H3-only grids (and circles) still jump.
+      setFocusLayerId(layer.id);
+      setFocusLayerToken((n) => n + 1);
     },
     [builder],
   );
@@ -233,12 +238,15 @@ export default function DashboardScreen() {
         draftColor={builder.draftColor}
         draftCircleSolid={builder.draftCircleSolid}
         fitDraftToken={builder.fitDraftToken}
+        focusLayerToken={focusLayerToken}
+        focusLayerId={focusLayerId}
         locationRequestNonce={builder.locationRequestNonce}
         zoomControlTop={mapChromeTop}
         onMapClick={builder.handleMapClick}
         onH3Toggle={builder.toggleH3Cell}
         onDeviceLocation={builder.applyDeviceLocation}
         onDeviceLocationError={builder.handleDeviceLocationError}
+        onUserMovedMap={builder.markMapUserAdjusted}
         style={{ flex: 1 }}
       />
 
