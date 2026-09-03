@@ -5,6 +5,7 @@ import {
   readDeviceLocation,
   LOCATION_UNAVAILABLE_MESSAGE,
 } from "@/lib/expoLocation";
+import { getMembers } from "@/api/members";
 import {
   createZone,
   deleteZone,
@@ -22,7 +23,7 @@ import {
   type ZoneType,
 } from "@/api/zones";
 import { AUTH_MAP_DEFAULT_CENTER, type LatLng } from "@/lib/h3";
-import { setStoredMapCenter } from "@/lib/storage";
+import { getStoredMapCenter, setStoredMapCenter } from "@/lib/storage";
 import {
   circleToGeoJsonPolygon,
   colorForZoneType,
@@ -60,8 +61,28 @@ export const MAX_ZONE_NAME_LENGTH = 120;
 
 export type ZoneBuilderScope = {
   currentUserId?: string;
+  currentUserName?: string;
   isAccountAdministrator?: boolean;
 };
+
+function resolveZoneOwnerName(
+  zone: SavedZone,
+  nameById: Map<string, string>,
+): SavedZone {
+  const existing =
+    typeof zone.owner_name === "string" ? zone.owner_name.trim() : "";
+  if (existing && !/^Owner #\d+$/i.test(existing)) {
+    return zone;
+  }
+  const oid =
+    zone.creator_id != null
+      ? String(zone.creator_id)
+      : zone.owner_id != null
+        ? String(zone.owner_id)
+        : "";
+  const resolved = oid ? nameById.get(oid) : undefined;
+  return resolved ? { ...zone, owner_name: resolved } : zone;
+}
 
 export function useZoneBuilder(
   ownerZoneId: string | undefined,
@@ -106,6 +127,10 @@ export function useZoneBuilder(
   const [locationRequestNonce, setLocationRequestNonce] = useState(0);
   const locationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fitDraftToken, setFitDraftToken] = useState(0);
+  /** "map" = pan only (initial GPS). "proximity" = lock proximity source. */
+  const locationIntentRef = useRef<"map" | "proximity">("map");
+  /** When false, a late GPS fix will not steal the camera from the user. */
+  const allowInitialGpsRef = useRef(true);
 
   // dynamic
   const [dynamicTarget, setDynamicTarget] = useState(5);
@@ -143,17 +168,29 @@ export function useZoneBuilder(
   const refresh = useCallback(async () => {
     setLoadingList(true);
     setListError(null);
-    const [zonesRes, capsRes] = await Promise.all([
+    const [zonesRes, capsRes, membersRes] = await Promise.all([
       getZones(),
       getZoneCapabilities(),
+      getMembers(),
     ]);
     if (zonesRes.error) {
       setListError(zonesRes.error);
       setLayers([]);
     } else {
-      const rows = zonesRes.data ?? [];
+      const nameById = new Map<string, string>();
+      for (const member of membersRes.data ?? []) {
+        const label = member.name?.trim();
+        if (member.id && label) nameById.set(String(member.id), label);
+      }
+      const selfId = scope?.currentUserId?.trim();
+      const selfName = scope?.currentUserName?.trim();
+      if (selfId && selfName) nameById.set(selfId, selfName);
+
+      const rows = (zonesRes.data ?? []).map((row) =>
+        resolveZoneOwnerName(row as SavedZone, nameById),
+      );
       const mapped = rows
-        .map((row, i) => zoneRecordToLayer(row as SavedZone, i))
+        .map((row, i) => zoneRecordToLayer(row, i))
         .filter((z): z is MapZoneLayer => z !== null);
       setLayers(mapped);
     }
@@ -161,7 +198,7 @@ export function useZoneBuilder(
       setCapabilities(capsRes.data);
     }
     setLoadingList(false);
-  }, []);
+  }, [scope?.currentUserId, scope?.currentUserName]);
 
   useEffect(() => {
     void refresh();
@@ -202,6 +239,7 @@ export function useZoneBuilder(
           result.data.center.latitude,
           result.data.center.longitude,
         ];
+        allowInitialGpsRef.current = false;
         setMapCenter(next);
         setFitDraftToken((t) => t + 1);
         setStatus(
@@ -283,13 +321,28 @@ export function useZoneBuilder(
     }
   }, []);
 
+  const markMapUserAdjusted = useCallback(() => {
+    allowInitialGpsRef.current = false;
+  }, []);
+
   const applyDeviceLocation = useCallback(
     (lat: number, lng: number, accuracy?: number) => {
       clearLocationTimeout();
       const here: LatLng = [lat, lng];
+      const lockProximity = locationIntentRef.current === "proximity";
+      if (!lockProximity && !allowInitialGpsRef.current) {
+        setProximityLocating(false);
+        return;
+      }
+      allowInitialGpsRef.current = false;
+      setMapCenter(here);
+      void setStoredMapCenter({ latitude: lat, longitude: lng });
+      if (!lockProximity) {
+        setProximityLocating(false);
+        return;
+      }
       setProximityCenter(here);
       setProximitySource("current_location");
-      setMapCenter(here);
       setFitDraftToken((t) => t + 1);
       setProximityLocating(false);
       const acc =
@@ -298,7 +351,6 @@ export function useZoneBuilder(
           : "";
       setStatus(`Locked onto your location${acc}`);
       setError(null);
-      void setStoredMapCenter({ latitude: lat, longitude: lng });
     },
     [clearLocationTimeout],
   );
@@ -307,47 +359,60 @@ export function useZoneBuilder(
     (message: string) => {
       clearLocationTimeout();
       setProximityLocating(false);
+      if (locationIntentRef.current !== "proximity") return;
       setError(message || LOCATION_UNAVAILABLE_MESSAGE);
       setStatus(null);
     },
     [clearLocationTimeout],
   );
 
-  const requestMapWebViewLocation = useCallback(async () => {
-    if (Platform.OS === "android") {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: "Use your location",
-            message:
-              "Safe Zone Patrol needs your device location to anchor the proximity zone.",
-            buttonPositive: "Allow",
-            buttonNegative: "Cancel",
-          },
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          setProximityLocating(false);
-          setError(
-            "Location permission denied. Enable it in app settings or tap the map instead.",
+  const requestMapWebViewLocation = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      if (Platform.OS === "android") {
+        try {
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+            silent
+              ? undefined
+              : {
+                  title: "Use your location",
+                  message:
+                    "Safe Zone Patrol needs your device location to center the map on you.",
+                  buttonPositive: "Allow",
+                  buttonNegative: "Cancel",
+                },
           );
-          setStatus(null);
-          return;
+          if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+            if (!silent) {
+              setProximityLocating(false);
+              setError(
+                "Location permission denied. Enable it in app settings or tap the map instead.",
+              );
+              setStatus(null);
+            }
+            return;
+          }
+        } catch {
+          // fall through and try the WebView prompt anyway
         }
-      } catch {
-        // fall through and try the WebView prompt anyway
       }
-    }
-    clearLocationTimeout();
-    locationTimeoutRef.current = setTimeout(() => {
-      setProximityLocating(false);
-      setError(LOCATION_UNAVAILABLE_MESSAGE);
-      setStatus(null);
-    }, 22000);
-    setLocationRequestNonce((n) => n + 1);
-  }, [clearLocationTimeout]);
+      if (!silent) {
+        clearLocationTimeout();
+        locationTimeoutRef.current = setTimeout(() => {
+          setProximityLocating(false);
+          setError(LOCATION_UNAVAILABLE_MESSAGE);
+          setStatus(null);
+        }, 22000);
+      }
+      setLocationRequestNonce((n) => n + 1);
+    },
+    [clearLocationTimeout],
+  );
 
   const requestCurrentLocation = useCallback(async () => {
+    locationIntentRef.current = "proximity";
+    allowInitialGpsRef.current = false;
     setProximityLocating(true);
     setError(null);
     setStatus("Requesting GPS…");
@@ -398,8 +463,38 @@ export function useZoneBuilder(
     }
   }, [applyDeviceLocation, requestMapWebViewLocation]);
 
+  /** Open the Zones map on the device GPS instead of the New York fallback. */
+  useEffect(() => {
+    let cancelled = false;
+
+    const locate = async () => {
+      const stored = await getStoredMapCenter();
+      if (!cancelled && stored && allowInitialGpsRef.current) {
+        setMapCenter([stored.latitude, stored.longitude]);
+      }
+
+      const result = await readDeviceLocation({ timeoutMs: 12000 });
+      if (cancelled || !allowInitialGpsRef.current) return;
+      if (result) {
+        applyDeviceLocation(
+          result.coords.latitude,
+          result.coords.longitude,
+          result.coords.accuracy,
+        );
+        return;
+      }
+      await requestMapWebViewLocation({ silent: true });
+    };
+
+    void locate();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyDeviceLocation, requestMapWebViewLocation]);
+
   const handleMapClick = useCallback(
     (lat: number, lng: number) => {
+      allowInitialGpsRef.current = false;
       const pt: LatLng = [lat, lng];
       if (zoneType === "geofence") {
         if (geofenceTool === "polygon") {
@@ -589,7 +684,10 @@ export function useZoneBuilder(
       `Communal ID validated — ${result.data.display_name ?? result.data.reference_id}`,
     );
     const rings = ringsFromValidation(result.data);
-    if (rings[0] && rings[0][0]) setMapCenter(rings[0][0]);
+    if (rings[0] && rings[0][0]) {
+      allowInitialGpsRef.current = false;
+      setMapCenter(rings[0][0]);
+    }
   }, [communalCode]);
 
   const generateCommunal = useCallback(async () => {
@@ -612,7 +710,10 @@ export function useZoneBuilder(
     setCommunalValidation(result.data);
     setStatus(`Generated ${result.data.reference_id}`);
     const rings = ringsFromValidation(result.data);
-    if (rings[0] && rings[0][0]) setMapCenter(rings[0][0]);
+    if (rings[0] && rings[0][0]) {
+      allowInitialGpsRef.current = false;
+      setMapCenter(rings[0][0]);
+    }
   }, []);
 
   const validateGovernment = useCallback(async () => {
@@ -656,7 +757,10 @@ export function useZoneBuilder(
       `Address validated — ${result.data.display_name ?? result.data.reference_id}`,
     );
     const rings = ringsFromValidation(result.data);
-    if (rings[0] && rings[0][0]) setMapCenter(rings[0][0]);
+    if (rings[0] && rings[0][0]) {
+      allowInitialGpsRef.current = false;
+      setMapCenter(rings[0][0]);
+    }
   }, [governmentFields, governmentMode]);
 
   const canSave = useMemo(() => {
@@ -968,6 +1072,7 @@ export function useZoneBuilder(
   }, [dynamicPreview, objectCenter, proximityCenter, zoneType]);
 
   const recenterDraft = useCallback(() => {
+    allowInitialGpsRef.current = false;
     if (
       zoneType === "dynamic" &&
       dynamicPreview?.center &&
@@ -1011,7 +1116,10 @@ export function useZoneBuilder(
     setZoneDescription,
 
     mapCenter,
-    setMapCenter,
+    setMapCenter: (next: LatLng) => {
+      allowInitialGpsRef.current = false;
+      setMapCenter(next);
+    },
 
     // shared draft
     draftMarker,
@@ -1075,6 +1183,7 @@ export function useZoneBuilder(
     requestCurrentLocation,
     applyDeviceLocation,
     handleDeviceLocationError,
+    markMapUserAdjusted,
 
     // dynamic
     dynamicTarget,

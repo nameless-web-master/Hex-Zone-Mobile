@@ -383,6 +383,7 @@ export function ZoneTypePanel({ builder, onShowOnMap }: Props) {
           onChange={(addr, coords) => {
             builder.setObjectQuery(addr);
             if (coords) {
+              builder.markMapUserAdjusted();
               builder.setObjectCenter(coords);
               builder.setMapCenter(coords);
               void setStoredMapCenter({

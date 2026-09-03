@@ -21,6 +21,7 @@ export type MessageFeaturePayload = {
   to?: string;
   co?: string;
   receiver_owner_id?: number;
+  zone_record_id?: number;
 };
 
 export type MessageFeatureBlock = {
@@ -179,6 +180,7 @@ export type PrivateLocationStatus =
 export async function searchPrivateMessageRecipients(
   query: string,
   position?: MessageFeaturePosition,
+  zoneRecordId?: number,
 ) {
   return request<PrivateSearchMembersResponse>({
     method: "GET",
@@ -187,6 +189,64 @@ export async function searchPrivateMessageRecipients(
       q: query.trim(),
       ...(position
         ? { latitude: position.latitude, longitude: position.longitude }
+        : {}),
+      ...(zoneRecordId != null ? { zone_record_id: zoneRecordId } : {}),
+    },
+  });
+}
+
+export type ComposeZoneOption = {
+  zone_record_id: number;
+  zone_id: string;
+  name: string | null;
+  label: string;
+  tier: string;
+};
+
+export type ComposeZonesResponse = {
+  location_status?: PrivateLocationStatus;
+  zones: ComposeZoneOption[];
+};
+
+export async function listComposeZones(position?: MessageFeaturePosition) {
+  return request<ComposeZonesResponse>({
+    method: "GET",
+    url: "/message-feature/compose/zones",
+    params: position
+      ? { latitude: position.latitude, longitude: position.longitude }
+      : undefined,
+  });
+}
+
+export type ComposeRecipientsResponse = {
+  zone_ids: string[];
+  zone_record_id?: number | null;
+  members: PrivateSearchMember[];
+  location_status?: PrivateLocationStatus;
+  strategy?: string | null;
+};
+
+export async function listComposeZoneRecipients(params: {
+  /** Omit to preview all matched overlapping zones. */
+  zoneRecordId?: number | null;
+  type: MessageFeatureType;
+  position?: MessageFeaturePosition;
+  query?: string;
+}) {
+  return request<ComposeRecipientsResponse>({
+    method: "GET",
+    url: "/message-feature/compose/recipients",
+    params: {
+      ...(params.zoneRecordId != null
+        ? { zone_record_id: params.zoneRecordId }
+        : {}),
+      type: params.type,
+      q: params.query?.trim() ?? "",
+      ...(params.position
+        ? {
+            latitude: params.position.latitude,
+            longitude: params.position.longitude,
+          }
         : {}),
     },
   });

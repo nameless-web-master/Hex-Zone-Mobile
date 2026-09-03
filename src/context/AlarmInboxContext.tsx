@@ -17,8 +17,12 @@ type AlarmInboxContextValue = {
   unreadAlarmCount: number;
   markAlarmsSeen: () => Promise<void>;
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+  loadMore: () => Promise<void>;
+  pageSize: number;
 };
 
 const AlarmInboxContext = createContext<AlarmInboxContextValue | undefined>(
@@ -28,7 +32,16 @@ const AlarmInboxContext = createContext<AlarmInboxContextValue | undefined>(
 export function AlarmInboxProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const ownerId = user?.id;
-  const { messages, loading, error, refresh } = useMessagesFeed();
+  const {
+    messages,
+    loading,
+    loadingMore,
+    hasMore,
+    error,
+    refresh,
+    loadMore,
+    pageSize,
+  } = useMessagesFeed();
 
   const alarmMessages = useMemo(
     () => messages.filter((m) => m.category === "Alarm"),
@@ -55,16 +68,24 @@ export function AlarmInboxProvider({ children }: { children: ReactNode }) {
       unreadAlarmCount,
       markAlarmsSeen,
       loading,
+      loadingMore,
+      hasMore,
       error,
       refresh,
+      loadMore,
+      pageSize,
     }),
     [
       alarmMessages,
       unreadAlarmCount,
       markAlarmsSeen,
       loading,
+      loadingMore,
+      hasMore,
       error,
       refresh,
+      loadMore,
+      pageSize,
     ],
   );
 

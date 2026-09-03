@@ -59,6 +59,14 @@ export function summarizeZone(zone: SavedZone): string {
   return "Geofence";
 }
 
+/** Prefer API `owner_name`; hide synthetic `Owner #id` placeholders. */
+export function zoneOwnerLabel(zone: SavedZone): string | null {
+  const named =
+    typeof zone.owner_name === "string" ? zone.owner_name.trim() : "";
+  if (named && !/^Owner #\d+$/i.test(named)) return named;
+  return null;
+}
+
 export type ZoneLayerKind = "polygon" | "circle" | "marker";
 
 export type ZoneCircle = {
@@ -254,7 +262,40 @@ export function readZoneCenter(zone: SavedZone): LatLng | null {
   if (c && Number.isFinite(c.latitude) && Number.isFinite(c.longitude)) {
     return [c.latitude as number, c.longitude as number];
   }
+  if (Array.isArray(geo.centers) && geo.centers.length > 0) {
+    const first = geo.centers[0] as { latitude?: number; longitude?: number };
+    if (
+      first &&
+      Number.isFinite(first.latitude) &&
+      Number.isFinite(first.longitude)
+    ) {
+      return [first.latitude as number, first.longitude as number];
+    }
+  }
+  const cfg = (zone.config ?? {}) as Record<string, unknown>;
+  const lat = Number(cfg.latitude ?? cfg.lat);
+  const lng = Number(cfg.longitude ?? cfg.lng ?? cfg.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90) {
+    return [lat, lng];
+  }
   return null;
+}
+
+/** Best map jump target for a saved layer (null when only H3 geometry is known). */
+export function layerFocusPoint(layer: MapZoneLayer): LatLng | null {
+  if (layer.marker) return layer.marker;
+  if (layer.circles[0]?.center) return layer.circles[0].center;
+  const ring = layer.rings.find((r) => r.length > 0);
+  if (ring && ring.length > 0) {
+    let latSum = 0;
+    let lngSum = 0;
+    for (const [lat, lng] of ring) {
+      latSum += lat;
+      lngSum += lng;
+    }
+    return [latSum / ring.length, lngSum / ring.length];
+  }
+  return readZoneCenter(layer.raw);
 }
 
 /** DB record id used for PATCH/DELETE (`zone.id`). */

@@ -15,6 +15,10 @@ export type SavedZone = {
   name?: string;
   type?: string;
   zone_type?: string;
+  owner_id?: string | number;
+  creator_id?: string | number;
+  /** Display name for the zone creator/owner (preferred). */
+  owner_name?: string | null;
   geometry?: Record<string, unknown>;
   config?: Record<string, unknown>;
   h3_cells?: string[];

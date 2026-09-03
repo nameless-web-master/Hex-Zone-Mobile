@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -12,7 +13,7 @@ import {
 import { useRouter, type Href } from "expo-router";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { ImagePlus, Send } from "lucide-react-native";
+import { ImagePlus, Send, Users, X } from "lucide-react-native";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
@@ -25,6 +26,9 @@ import { uploadMessageImage } from "@/api/settings";
 import {
   propagateMessageFeatureMessage,
   searchPrivateMessageRecipients,
+  listComposeZones,
+  listComposeZoneRecipients,
+  type ComposeZoneOption,
   type PrivateSearchMember,
 } from "@/api/messageFeature";
 import { listGuestRequests } from "@/api/guest";
@@ -43,6 +47,7 @@ import {
   isAccessGuestChannelType,
   isPrivateMessageType,
   toMessageTypeLabel,
+  usesComposeZoneTargeting,
   usesGeoPropagationMessageType,
   type MessageType,
 } from "@/lib/messageTypes";
@@ -132,6 +137,15 @@ export function ComposeMessageSheet({
   const [senderZoneIds, setSenderZoneIds] = useState<string[]>([]);
   const [privateLocationStatus, setPrivateLocationStatus] =
     useState<PrivateLocationStatus | null>(null);
+  const [composeZones, setComposeZones] = useState<ComposeZoneOption[]>([]);
+  const [composeZoneSelection, setComposeZoneSelection] = useState<"all" | number>("all");
+  const [zoneRecipients, setZoneRecipients] = useState<PrivateSearchMember[]>([]);
+  const [zoneRecipientGroups, setZoneRecipientGroups] = useState<
+    { zoneRecordId: number; label: string; members: PrivateSearchMember[] }[]
+  >([]);
+  const [zoneRecipientsLoading, setZoneRecipientsLoading] = useState(false);
+  const [loadingComposeZones, setLoadingComposeZones] = useState(false);
+  const [receiversModalOpen, setReceiversModalOpen] = useState(false);
   const [guestOptions, setGuestOptions] = useState<
     { id: string; label: string }[]
   >([]);
@@ -148,6 +162,11 @@ export function ComposeMessageSheet({
     () => (zoneId?.trim() ? zoneId.trim() : null),
     [zoneId],
   );
+
+  const selectedZoneRecordId =
+    composeZoneSelection === "all" ? null : composeZoneSelection;
+  const showComposeZonePicker =
+    usesComposeZoneTargeting(composeType) && composeZones.length > 1;
 
   const groupedTypeOptions = useMemo(() => groupMessageTypesForUI(), []);
   const composeTypeOptions = useMemo(
@@ -172,6 +191,11 @@ export function ComposeMessageSheet({
     setPrivateSearchQuery("");
     pickingImagesRef.current = false;
     setPrivateSearchResults([]);
+    setComposeZones([]);
+    setComposeZoneSelection("all");
+    setZoneRecipients([]);
+    setZoneRecipientGroups([]);
+    setReceiversModalOpen(false);
   }, [visible]);
 
   useEffect(() => {
@@ -202,12 +226,13 @@ export function ComposeMessageSheet({
   }, [visible, composeZoneId]);
 
   useEffect(() => {
-    if (!visible || !isPrivateMessageType(composeType)) {
-      if (!isPrivateMessageType(composeType)) {
+    if (!visible || !isPrivateMessageType(composeType) || selectedZoneRecordId != null) {
+      if (!isPrivateMessageType(composeType) && selectedZoneRecordId == null) {
         setSenderZoneIds([]);
         setPrivateLocationStatus(null);
         setPrivateSearchResults([]);
       }
+      setPrivateSearchLoading(false);
       return;
     }
     let active = true;
@@ -232,13 +257,177 @@ export function ComposeMessageSheet({
       })();
     }, debounceMs);
     return () => { active = false; clearTimeout(timer); };
-  }, [visible, composeType, privateSearchQuery, user?.mapCenter, user?.map_center]);
+  }, [
+    visible,
+    composeType,
+    privateSearchQuery,
+    selectedZoneRecordId,
+    user?.mapCenter,
+    user?.map_center,
+  ]);
+
+  useEffect(() => {
+    if (!visible || !usesComposeZoneTargeting(composeType)) {
+      setComposeZones([]);
+      setComposeZoneSelection("all");
+      setZoneRecipients([]);
+      setZoneRecipientGroups([]);
+      setLoadingComposeZones(false);
+      return;
+    }
+    let active = true;
+    // Clear previous type's zones immediately so the picker always rechecks.
+    setComposeZones([]);
+    setComposeZoneSelection("all");
+    setZoneRecipients([]);
+    setZoneRecipientGroups([]);
+    setLoadingComposeZones(true);
+    void (async () => {
+      try {
+        const resolved = await resolveMessagePropagationPositionForType(
+          composeType,
+          user?.mapCenter ?? user?.map_center ?? null,
+        );
+        const position = "error" in resolved ? undefined : resolved.position;
+        const result = await listComposeZones(position);
+        if (!active) return;
+        const zones = result.data?.zones ?? [];
+        setComposeZones(zones);
+      } finally {
+        if (active) setLoadingComposeZones(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [visible, composeType, user?.mapCenter, user?.map_center]);
+
+  useEffect(() => {
+    if (
+      !visible ||
+      !usesComposeZoneTargeting(composeType) ||
+      isAccessGuestChannelType(composeType)
+    ) {
+      if (!usesComposeZoneTargeting(composeType)) {
+        setZoneRecipients([]);
+        setZoneRecipientGroups([]);
+      }
+      setZoneRecipientsLoading(false);
+      return;
+    }
+    // Private keeps its own search when no single zone is selected.
+    if (isPrivateMessageType(composeType) && selectedZoneRecordId == null) {
+      setZoneRecipients([]);
+      setZoneRecipientGroups([]);
+      setZoneRecipientsLoading(false);
+      return;
+    }
+    // For "All zones", wait until overlapping zones are known, then preview each.
+    if (selectedZoneRecordId == null) {
+      if (loadingComposeZones) return;
+      if (composeZones.length === 0) {
+        setZoneRecipients([]);
+        setZoneRecipientGroups([]);
+        setZoneRecipientsLoading(false);
+        return;
+      }
+    }
+
+    const zoneTargets =
+      selectedZoneRecordId != null
+        ? [
+            composeZones.find((z) => z.zone_record_id === selectedZoneRecordId) ?? {
+              zone_record_id: selectedZoneRecordId,
+              zone_id: "",
+              name: null,
+              label: "Selected zone",
+              tier: "secondary",
+            },
+          ]
+        : composeZones;
+
+    let active = true;
+    setZoneRecipientsLoading(true);
+    const debounceMs =
+      isPrivateMessageType(composeType) && privateSearchQuery.trim().length >= 2
+        ? 300
+        : 0;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const resolved = await resolveMessagePropagationPositionForType(
+            composeType,
+            user?.mapCenter ?? user?.map_center ?? null,
+          );
+          const position = "error" in resolved ? undefined : resolved.position;
+          const groups = await Promise.all(
+            zoneTargets.map(async (zone) => {
+              const result = await listComposeZoneRecipients({
+                zoneRecordId: zone.zone_record_id,
+                type: composeType,
+                position,
+                query:
+                  isPrivateMessageType(composeType) &&
+                  privateSearchQuery.trim().length >= 2
+                    ? privateSearchQuery
+                    : "",
+              });
+              return {
+                zoneRecordId: zone.zone_record_id,
+                label: zone.label,
+                members: result.data?.members ?? [],
+              };
+            }),
+          );
+          if (!active) return;
+          setZoneRecipientGroups(groups);
+          const merged = new Map<number | string, PrivateSearchMember>();
+          for (const group of groups) {
+            for (const member of group.members) {
+              merged.set(member.id, member);
+            }
+          }
+          setZoneRecipients(Array.from(merged.values()));
+          setPrivateLocationStatus(
+            groups.some((g) => g.members.length > 0) || composeZones.length > 0
+              ? "inside_zone"
+              : "outside_zone",
+          );
+          setSenderZoneIds(
+            Array.from(
+              new Set(
+                zoneTargets
+                  .map((z) => String(z.zone_id ?? "").trim())
+                  .filter(Boolean),
+              ),
+            ),
+          );
+        } finally {
+          if (active) setZoneRecipientsLoading(false);
+        }
+      })();
+    }, debounceMs);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [
+    visible,
+    composeType,
+    selectedZoneRecordId,
+    composeZones,
+    loadingComposeZones,
+    privateSearchQuery,
+    user?.mapCenter,
+    user?.map_center,
+  ]);
 
   useEffect(() => {
     setComposeReceiverId("");
     setComposeStatus("");
     setPrivateSearchQuery("");
     setPrivateSearchResults([]);
+    setReceiversModalOpen(false);
   }, [composeType]);
 
   useEffect(() => {
@@ -264,6 +453,7 @@ export function ComposeMessageSheet({
   );
 
   const closeAll = useCallback(() => {
+    setReceiversModalOpen(false);
     onClose();
   }, [onClose]);
 
@@ -501,6 +691,9 @@ export function ComposeMessageSheet({
           ...(isPrivateMessageType(composeType)
             ? { receiver_owner_id: parsedReceiverId }
             : {}),
+          ...(selectedZoneRecordId != null
+            ? { zone_record_id: selectedZoneRecordId }
+            : {}),
         });
         if (result.error) throw new Error(result.error);
         const body = result.data;
@@ -555,7 +748,7 @@ export function ComposeMessageSheet({
     draft, composeImages, composeType, composeReceiverId, composeZoneId,
     refresh, user?.mapCenter, user?.map_center, selfBroadcastName, ownerId,
     applyGeoPropagationToInbox, composeServicePaFields, confirmEmergencySend,
-    sending, afterSuccessfulSend,
+    sending, afterSuccessfulSend, selectedZoneRecordId,
   ]);
 
   return (
@@ -569,8 +762,124 @@ export function ComposeMessageSheet({
             paddingBottom: Math.max(bottomInset, 16) + 12,
             flexGrow: 1,
             flexShrink: 1,
+            position: "relative",
+            overflow: "hidden",
           }}
         >
+          {receiversModalOpen ? (
+            <View style={receiversModalStyles.root} pointerEvents="box-none">
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => setReceiversModalOpen(false)}
+              />
+              <View style={receiversModalStyles.card}>
+                <View style={receiversModalStyles.header}>
+                  <Text style={receiversModalStyles.title}>Possible receivers</Text>
+                  <Pressable
+                    onPress={() => setReceiversModalOpen(false)}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close receivers list"
+                  >
+                    <X size={18} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+                <Text style={receiversModalStyles.subtitle}>
+                  {composeZoneSelection === "all"
+                    ? `All overlapping zones (${composeZones.length})`
+                    : composeZones.find(
+                        (z) => z.zone_record_id === composeZoneSelection,
+                      )?.label ?? "Selected zone"}
+                </Text>
+                {zoneRecipientsLoading ? (
+                  <ActivityIndicator
+                    color={colors.accent}
+                    style={{ marginVertical: 16 }}
+                  />
+                ) : composeZoneSelection === "all" ? (
+                  zoneRecipientGroups.length === 0 ||
+                  zoneRecipientGroups.every((g) => g.members.length === 0) ? (
+                    <Text style={receiversModalStyles.empty}>
+                      No receivers for this selection.
+                    </Text>
+                  ) : (
+                    <ScrollView
+                      style={{ maxHeight: 280 }}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      {zoneRecipientGroups.map((group) => (
+                        <View
+                          key={group.zoneRecordId}
+                          style={receiversModalStyles.group}
+                        >
+                          <Text
+                            style={receiversModalStyles.groupTitle}
+                            numberOfLines={1}
+                          >
+                            {group.label}
+                          </Text>
+                          {group.members.length === 0 ? (
+                            <Text style={receiversModalStyles.empty}>
+                              No receivers in this zone.
+                            </Text>
+                          ) : (
+                            group.members.map((m) => (
+                              <View
+                                key={`${group.zoneRecordId}-${m.id}`}
+                                style={receiversModalStyles.row}
+                              >
+                                <Text
+                                  style={receiversModalStyles.name}
+                                  numberOfLines={1}
+                                >
+                                  {m.display_name}
+                                </Text>
+                                {m.subtitle || m.email ? (
+                                  <Text
+                                    style={receiversModalStyles.meta}
+                                    numberOfLines={1}
+                                  >
+                                    {m.subtitle || m.email}
+                                  </Text>
+                                ) : null}
+                              </View>
+                            ))
+                          )}
+                        </View>
+                      ))}
+                    </ScrollView>
+                  )
+                ) : zoneRecipients.length === 0 ? (
+                  <Text style={receiversModalStyles.empty}>
+                    No receivers for this selection.
+                  </Text>
+                ) : (
+                  <ScrollView
+                    style={{ maxHeight: 260 }}
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                  >
+                    {zoneRecipients.map((m) => (
+                      <View key={m.id} style={receiversModalStyles.row}>
+                        <Text style={receiversModalStyles.name} numberOfLines={1}>
+                          {m.display_name}
+                        </Text>
+                        {m.subtitle || m.email ? (
+                          <Text
+                            style={receiversModalStyles.meta}
+                            numberOfLines={1}
+                          >
+                            {m.subtitle || m.email}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            </View>
+          ) : null}
           <View style={{ alignItems: "center", paddingBottom: 10 }}>
             <View
               style={{
@@ -623,6 +932,103 @@ export function ComposeMessageSheet({
               )}
             </ScrollView>
 
+            {usesComposeZoneTargeting(composeType) ? (
+              <View style={{ marginTop: 12, gap: 8 }}>
+                <Text
+                  style={{
+                    color: colors.textMuted,
+                    fontSize: 11,
+                    fontWeight: "600",
+                    letterSpacing: 1.5,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Send to zone
+                </Text>
+                {loadingComposeZones ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : composeZones.length === 0 ? (
+                  <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                    No overlapping zones at this message type's send location.
+                  </Text>
+                ) : showComposeZonePicker ? (
+                  <>
+                    <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                      You are inside more than one zone. Choose one zone or keep
+                      all zones.
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                    >
+                      <Pressable
+                        onPress={() => {
+                          setComposeZoneSelection("all");
+                          setComposeReceiverId("");
+                        }}
+                        style={{ marginRight: 8 }}
+                      >
+                        <Chip
+                          label="All zones"
+                          active={composeZoneSelection === "all"}
+                        />
+                      </Pressable>
+                      {composeZones.map((zone) => (
+                        <Pressable
+                          key={zone.zone_record_id}
+                          onPress={() => {
+                            setComposeZoneSelection(zone.zone_record_id);
+                            setComposeReceiverId("");
+                          }}
+                          style={{ marginRight: 8 }}
+                        >
+                          <Chip
+                            label={zone.label}
+                            active={composeZoneSelection === zone.zone_record_id}
+                          />
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </>
+                ) : (
+                  <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                    {composeZones[0]?.label ?? "1 zone"}
+                  </Text>
+                )}
+                {!isAccessGuestChannelType(composeType) &&
+                !isPrivateMessageType(composeType) &&
+                composeZones.length > 0 ? (
+                  <Pressable
+                    onPress={() => setReceiversModalOpen(true)}
+                    style={{
+                      marginTop: 4,
+                      alignSelf: "flex-start",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      backgroundColor: colors.bgCard,
+                      borderRadius: 12,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                    }}
+                  >
+                    <Users size={16} color={colors.accent} />
+                    <Text
+                      style={{
+                        color: colors.accent,
+                        fontSize: 13,
+                        fontWeight: "600",
+                      }}
+                    >
+                      View possible receivers
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
             {isAccessGuestChannelType(composeType) ? (
               <View style={{ marginTop: 12, gap: 8 }}>
                 <Text style={{ color: colors.textMuted, fontSize: 12 }}>
@@ -651,7 +1057,10 @@ export function ComposeMessageSheet({
             {!isAccessGuestChannelType(composeType) &&
             isPrivateMessageType(composeType) ? (
               <View style={{ marginTop: 12, gap: 8 }}>
-                {privateSearchLoading && privateLocationStatus === null ? (
+                {(selectedZoneRecordId != null
+                  ? zoneRecipientsLoading
+                  : privateSearchLoading) &&
+                privateLocationStatus === null ? (
                   <ActivityIndicator color={colors.accent} />
                 ) : privateLocationStatusMessage(privateLocationStatus) ? (
                   <Text style={{ color: colors.textDim, fontSize: 12 }}>
@@ -675,8 +1084,15 @@ export function ComposeMessageSheet({
                         color: colors.text, fontSize: 15,
                       }}
                     />
-                    {privateSearchLoading ? <ActivityIndicator color={colors.accent} /> : null}
-                    {privateSearchResults.map((m) => (
+                    {(selectedZoneRecordId != null
+                      ? zoneRecipientsLoading
+                      : privateSearchLoading) ? (
+                      <ActivityIndicator color={colors.accent} />
+                    ) : null}
+                    {(selectedZoneRecordId != null
+                      ? zoneRecipients
+                      : privateSearchResults
+                    ).map((m) => (
                       <Pressable
                         key={m.id}
                         onPress={() => {
@@ -692,8 +1108,13 @@ export function ComposeMessageSheet({
                       </Pressable>
                     ))}
                     {privateSearchQuery.trim().length >= 2 &&
-                    !privateSearchLoading &&
-                    privateSearchResults.length === 0 ? (
+                    !(selectedZoneRecordId != null
+                      ? zoneRecipientsLoading
+                      : privateSearchLoading) &&
+                    (selectedZoneRecordId != null
+                      ? zoneRecipients
+                      : privateSearchResults
+                    ).length === 0 ? (
                       <Text style={{ color: colors.textDim, fontSize: 12 }}>
                         No members matched.
                       </Text>
@@ -856,3 +1277,67 @@ export function ComposeMessageSheet({
     </>
   );
 }
+
+const receiversModalStyles = StyleSheet.create({
+  root: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+  },
+  card: {
+    backgroundColor: colors.bgCard,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 8,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  title: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  subtitle: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  empty: {
+    color: colors.textDim,
+    fontSize: 13,
+    paddingVertical: 12,
+  },
+  group: {
+    marginBottom: 12,
+  },
+  groupTitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  row: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  name: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  meta: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+});
